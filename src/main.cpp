@@ -68,6 +68,11 @@ void drawBlackPixel(uint8_t* framebuffer, uint16_t widthBytes, uint16_t height, 
   framebuffer[static_cast<uint32_t>(y) * widthBytes + x / 8] &= static_cast<uint8_t>(~(0x80U >> (x % 8)));
 }
 
+void drawWhitePixel(uint8_t* framebuffer, uint16_t widthBytes, uint16_t height, uint16_t x, uint16_t y) {
+  if (framebuffer == nullptr || x >= widthBytes * 8 || y >= height) return;
+  framebuffer[static_cast<uint32_t>(y) * widthBytes + x / 8] |= static_cast<uint8_t>(0x80U >> (x % 8));
+}
+
 void fillBlackRect(uint8_t* framebuffer, uint16_t widthBytes, uint16_t height, uint16_t x, uint16_t y, uint16_t w,
                    uint16_t h) {
   const uint16_t displayWidth = static_cast<uint16_t>(widthBytes * 8);
@@ -78,6 +83,43 @@ void fillBlackRect(uint8_t* framebuffer, uint16_t widthBytes, uint16_t height, u
   for (uint16_t py = y; py < yEnd; ++py) {
     for (uint16_t px = x; px < xEnd; ++px) drawBlackPixel(framebuffer, widthBytes, height, px, py);
   }
+}
+
+void fillWhiteRect(uint8_t* framebuffer, uint16_t widthBytes, uint16_t height, uint16_t x, uint16_t y, uint16_t w,
+                   uint16_t h) {
+  const uint16_t displayWidth = static_cast<uint16_t>(widthBytes * 8);
+  const uint16_t xCandidate = static_cast<uint16_t>(x + w);
+  const uint16_t yCandidate = static_cast<uint16_t>(y + h);
+  const uint16_t xEnd = xCandidate < displayWidth ? xCandidate : displayWidth;
+  const uint16_t yEnd = yCandidate < height ? yCandidate : height;
+  for (uint16_t py = y; py < yEnd; ++py) {
+    for (uint16_t px = x; px < xEnd; ++px) drawWhitePixel(framebuffer, widthBytes, height, px, py);
+  }
+}
+
+void renderTransitionTarget(EInkDisplay& display, bool rightHalfBlack) {
+  uint8_t* const framebuffer = display.getFrameBuffer();
+  const uint16_t widthBytes = display.getDisplayWidthBytes();
+  const uint16_t height = display.getDisplayHeight();
+  constexpr uint16_t targetWidth = 192;
+  constexpr uint16_t targetHeight = 96;
+  constexpr uint16_t targetBorder = 8;
+  const uint16_t x = static_cast<uint16_t>((display.getDisplayWidth() - targetWidth) / 2);
+  const uint16_t y = static_cast<uint16_t>(height / 2 - targetHeight - 32);
+
+  fillWhiteRect(framebuffer, widthBytes, height, x, y, targetWidth, targetHeight);
+  fillBlackRect(framebuffer, widthBytes, height, x, y, targetWidth, targetBorder);
+  fillBlackRect(framebuffer, widthBytes, height, x, y + targetHeight - targetBorder, targetWidth, targetBorder);
+  fillBlackRect(framebuffer, widthBytes, height, x, y, targetBorder, targetHeight);
+  fillBlackRect(framebuffer, widthBytes, height, x + targetWidth - targetBorder, y, targetBorder, targetHeight);
+
+  const uint16_t innerX = static_cast<uint16_t>(x + targetBorder);
+  const uint16_t innerY = static_cast<uint16_t>(y + targetBorder);
+  const uint16_t innerWidth = static_cast<uint16_t>(targetWidth - targetBorder * 2);
+  const uint16_t halfWidth = static_cast<uint16_t>(innerWidth / 2);
+  const uint16_t blackX = rightHalfBlack ? static_cast<uint16_t>(innerX + halfWidth) : innerX;
+  fillBlackRect(framebuffer, widthBytes, height, blackX, innerY, halfWidth,
+                static_cast<uint16_t>(targetHeight - targetBorder * 2));
 }
 
 void renderDisplayTestPattern(EInkDisplay& display) {
@@ -159,10 +201,32 @@ void setup() {
     Serial.printf("Display geometry: %ux%u, framebuffer %lu bytes\n", display.getDisplayWidth(),
                   display.getDisplayHeight(), static_cast<unsigned long>(display.getBufferSize()));
     renderDisplayTestPattern(display);
-    Serial.println("Display test: starting one full refresh.");
-    display.displayBuffer(EInkDisplay::FULL_REFRESH, true);
+    renderTransitionTarget(display, false);
+    Serial.println("Display test phase 1/3: full refresh; transition target starts with logical left half black.");
+    display.displayBuffer(EInkDisplay::FULL_REFRESH, false);
+    Serial.println("Display test phase 1/3 complete; holding for 3 seconds.");
+    delay(3000);
+
+    // The explicit full refresh and the driver's automatic settling pass leave
+    // both controller planes synchronized, so subsequent calls can exercise
+    // their requested modes instead of the conservative boot-time full resync.
+    display.skipInitialResync();
+    const bool hasDistinctHalfAndFast =
+        BoardConfig::ACTIVE.displayController == BoardConfig::DisplayController::UC8253;
+
+    renderTransitionTarget(display, true);
+    Serial.printf("Display test phase 2/3: %s; transition target swaps to logical right half black.\n",
+                  hasDistinctHalfAndFast ? "half refresh" : "differential refresh A (half/fast alias)");
+    display.displayBuffer(EInkDisplay::HALF_REFRESH, false);
+    Serial.println("Display test phase 2/3 complete; holding for 3 seconds.");
+    delay(3000);
+
+    renderTransitionTarget(display, false);
+    Serial.printf("Display test phase 3/3: %s; transition target swaps back.\n",
+                  hasDistinctHalfAndFast ? "fast differential refresh" : "differential refresh B (half/fast alias)");
+    display.displayBuffer(EInkDisplay::FAST_REFRESH, true);
     display.deepSleep();
-    Serial.println("Display test: full refresh complete; panel sleeping.");
+    Serial.println("Display test phase 3/3 complete; panel sleeping.");
   } else {
     Serial.println("Board detection stopped; display pins untouched.");
   }

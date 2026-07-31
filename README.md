@@ -23,7 +23,7 @@ proven independently before later work is allowed to depend on it.
 | Deterministic application-only builds | Complete |
 | Reversible CrossPoint flashing | Validated on development hardware |
 | X3 and display-controller detection | Validated on a UC8253 X3 |
-| Full e-ink test pattern | Hardware validation in progress |
+| E-ink refresh modes | UC8253 full validated; UC8253 half/fast and UC8279d differential validation in progress |
 | Buttons, microSD, RTC, and battery | Not started |
 | Tamagotchi P1 emulation | Not started |
 | Save data and power management | Not started |
