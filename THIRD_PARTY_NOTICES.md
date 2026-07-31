@@ -35,7 +35,8 @@ credits original e-paper driver authorship to CidVonHighwind. Its complete
 `LICENSE` and `NOTICE` files must remain with source and release notices. The
 firmware pins revision `92303ba5e4d4f762bb2f9126a3e31c303d66eb28`
 (2026-07-28) as the `freeink-sdk` Git submodule and currently links only its
-`BoardConfig` and `XteinkDetect` libraries. TamaInk does not modify those files.
+`BoardConfig`, `XteinkDetect`, and `EInkDisplay` libraries. TamaInk does not
+modify those files.
 
 ## Development references
 
