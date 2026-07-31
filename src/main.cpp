@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <BoardConfig.h>
 #include <EInkDisplay.h>
+#include <InputManager.h>
 #include <XteinkDetect.h>
 #include <esp_system.h>
 
@@ -9,6 +10,16 @@
 #endif
 
 namespace {
+
+constexpr uint8_t BUTTON_COUNT = InputManager::BTN_POWER + 1;
+constexpr unsigned long INPUT_REPOLL_MS = 6;
+constexpr unsigned long HOLD_REPORT_INTERVAL_MS = 1000;
+
+InputManager inputManager;
+bool inputReady = false;
+uint8_t lastInputState = 0;
+unsigned long pressStartedAt[BUTTON_COUNT] = {};
+unsigned long lastHoldReportAt[BUTTON_COUNT] = {};
 
 const char* resetReasonName(esp_reset_reason_t reason) {
   switch (reason) {
@@ -168,6 +179,84 @@ void renderDisplayTestPattern(EInkDisplay& display) {
   }
 }
 
+const char* classifiedButtonName(int button) {
+  return button >= 0 && button < BUTTON_COUNT ? InputManager::getButtonName(static_cast<uint8_t>(button)) : "None";
+}
+
+uint8_t currentInputState() {
+  uint8_t state = 0;
+  for (uint8_t button = 0; button < BUTTON_COUNT; ++button) {
+    if (inputManager.isPressed(button)) state |= static_cast<uint8_t>(1U << button);
+  }
+  return state;
+}
+
+void printAdcSnapshot() {
+  InputManager::ButtonAdcSample group1 = {};
+  InputManager::ButtonAdcSample group2 = {};
+  inputManager.readButtonAdc(group1, group2);
+  Serial.printf("Input ADC: group1 GPIO%d raw=%d classified=%s; group2 GPIO%d raw=%d classified=%s\n", group1.pin,
+                group1.raw, classifiedButtonName(group1.button), group2.pin, group2.raw,
+                classifiedButtonName(group2.button));
+}
+
+void beginInputDiagnostic() {
+  inputManager.begin();
+  inputManager.update();
+  delay(10);
+  inputManager.update();
+  lastInputState = currentInputState();
+  const unsigned long now = millis();
+  for (uint8_t button = 0; button < BUTTON_COUNT; ++button) {
+    if (inputManager.isPressed(button)) {
+      pressStartedAt[button] = now;
+      lastHoldReportAt[button] = 0;
+      Serial.printf("Input INITIAL: %s already pressed\n", InputManager::getButtonName(button));
+    }
+  }
+  Serial.printf("Input STATE: 0x%02X%s\n", lastInputState,
+                (lastInputState & (lastInputState - 1)) != 0 ? " (simultaneous)" : "");
+  printAdcSnapshot();
+  Serial.println("Input diagnostic ready: press, release, hold, and combine physical buttons.");
+  inputReady = true;
+}
+
+void updateInputDiagnostic() {
+  inputManager.update();
+  if (inputManager.isDebouncePending()) {
+    delay(INPUT_REPOLL_MS);
+    inputManager.update();
+  }
+
+  const unsigned long now = millis();
+  const uint8_t state = currentInputState();
+  for (uint8_t button = 0; button < BUTTON_COUNT; ++button) {
+    if (inputManager.wasPressed(button)) {
+      pressStartedAt[button] = now;
+      lastHoldReportAt[button] = 0;
+      Serial.printf("Input PRESS: %s\n", InputManager::getButtonName(button));
+    }
+    if (inputManager.wasReleased(button)) {
+      const unsigned long heldMs = now - pressStartedAt[button];
+      Serial.printf("Input RELEASE: %s held=%lu ms\n", InputManager::getButtonName(button), heldMs);
+    }
+    if (inputManager.isPressed(button)) {
+      const unsigned long heldMs = now - pressStartedAt[button];
+      const unsigned long reportAt = heldMs / HOLD_REPORT_INTERVAL_MS;
+      if (reportAt > lastHoldReportAt[button]) {
+        lastHoldReportAt[button] = reportAt;
+        Serial.printf("Input HOLD: %s held=%lu ms\n", InputManager::getButtonName(button), heldMs);
+      }
+    }
+  }
+
+  if (state != lastInputState) {
+    Serial.printf("Input STATE: 0x%02X%s\n", state, (state & (state - 1)) != 0 ? " (simultaneous)" : "");
+    printAdcSnapshot();
+    lastInputState = state;
+  }
+}
+
 }  // namespace
 
 void setup() {
@@ -227,9 +316,13 @@ void setup() {
     display.displayBuffer(EInkDisplay::FAST_REFRESH, true);
     display.deepSleep();
     Serial.println("Display test phase 3/3 complete; panel sleeping.");
+    beginInputDiagnostic();
   } else {
     Serial.println("Board detection stopped; display pins untouched.");
   }
 }
 
-void loop() { delay(1000); }
+void loop() {
+  if (inputReady) updateInputDiagnostic();
+  delay(10);
+}
