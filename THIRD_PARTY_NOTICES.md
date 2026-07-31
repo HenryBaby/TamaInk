@@ -35,8 +35,21 @@ credits original e-paper driver authorship to CidVonHighwind. Its complete
 `LICENSE` and `NOTICE` files must remain with source and release notices. The
 firmware pins revision `92303ba5e4d4f762bb2f9126a3e31c303d66eb28`
 (2026-07-28) as the `freeink-sdk` Git submodule and currently links only its
-`BoardConfig`, `XteinkDetect`, `EInkDisplay`, and `InputManager` libraries.
+`BoardConfig`, `XteinkDetect`, `EInkDisplay`, `InputManager`, and
+`SDCardManager` libraries.
 TamaInk does not modify those files.
+
+### SdFat
+
+- Project: <https://github.com/greiman/SdFat>
+- Copyright: 2011-2020 Bill Greiman
+- Version: 2.3.1 (`cda057318bec196183d4cc92b01bc1dd64bbfb02`)
+- License: MIT
+- Use: pinned transitive runtime dependency of FreeInk SDK's `SDCardManager`,
+  providing FAT filesystem and SD-card access; TamaInk's current storage
+  diagnostic uses it only for read operations
+- Distribution obligations: preserve the upstream copyright and MIT permission
+  notice with source and binary distributions
 
 ## Development references
 

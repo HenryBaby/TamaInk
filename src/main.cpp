@@ -2,8 +2,10 @@
 #include <BoardConfig.h>
 #include <EInkDisplay.h>
 #include <InputManager.h>
+#include <SDCardManager.h>
 #include <XteinkDetect.h>
 #include <esp_system.h>
+#include <cstring>
 
 #ifndef TAMAINK_VERSION
 #define TAMAINK_VERSION "unknown"
@@ -257,6 +259,50 @@ void updateInputDiagnostic() {
   }
 }
 
+void runStorageDiagnostic() {
+  constexpr char sentinelPath[] = "/tamaink-readonly-test.txt";
+  constexpr char sentinelContents[] = "TAMAINK_STORAGE_TEST_V1";
+  constexpr size_t sentinelLength = sizeof(sentinelContents) - 1;
+  char contents[sentinelLength] = {};
+  Serial.printf("SD diagnostic: read-only checks; sentinel=%s\n", sentinelPath);
+  if (!SdMan.begin()) {
+    Serial.println("SD diagnostic: mount failed");
+    return;
+  }
+  Serial.printf("SD diagnostic: mounted total=%llu used=%llu bytes\n",
+                static_cast<unsigned long long>(SdMan.sdTotalBytes()),
+                static_cast<unsigned long long>(SdMan.sdUsedBytes()));
+  FsFile file = SdMan.open(sentinelPath, O_RDONLY);
+  if (!file) {
+    Serial.println(SdMan.exists(sentinelPath) ? "SD diagnostic: sentinel open failure"
+                                              : "SD diagnostic: sentinel missing");
+    return;
+  }
+  const uint64_t fileSize = file.size();
+  if (fileSize != sentinelLength) {
+    file.close();
+    Serial.printf("SD diagnostic: sentinel wrong size (%llu, expected %u)\n",
+                  static_cast<unsigned long long>(fileSize), static_cast<unsigned>(sentinelLength));
+    return;
+  }
+  const int bytesRead = file.read(contents, sentinelLength);
+  file.close();
+  if (bytesRead < 0) {
+    Serial.println("SD diagnostic: sentinel read failure");
+    return;
+  }
+  if (static_cast<size_t>(bytesRead) != sentinelLength) {
+    Serial.printf("SD diagnostic: sentinel short read (%d, expected %u)\n", bytesRead,
+                  static_cast<unsigned>(sentinelLength));
+    return;
+  }
+  if (std::memcmp(contents, sentinelContents, sentinelLength) != 0) {
+    Serial.println("SD diagnostic: sentinel content mismatch");
+    return;
+  }
+  Serial.println("SD diagnostic: sentinel pass");
+}
+
 }  // namespace
 
 void setup() {
@@ -316,6 +362,7 @@ void setup() {
     display.displayBuffer(EInkDisplay::FAST_REFRESH, true);
     display.deepSleep();
     Serial.println("Display test phase 3/3 complete; panel sleeping.");
+    runStorageDiagnostic();
     beginInputDiagnostic();
   } else {
     Serial.println("Board detection stopped; display pins untouched.");
