@@ -1,0 +1,4 @@
+interface:
+  display_name: "TamaInk Development"
+  short_description: "Build stable, reversible TamaInk firmware"
+  default_prompt: "Use $tamaink-development to implement the next stable TamaInk milestone."
