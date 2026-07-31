@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <BoardConfig.h>
+#include <XteinkDetect.h>
 #include <esp_system.h>
 
 #ifndef TAMAINK_VERSION
@@ -36,6 +38,30 @@ const char* resetReasonName(esp_reset_reason_t reason) {
   }
 }
 
+const char* xteinkVerdictName(freeink::XteinkVerdict verdict) {
+  switch (verdict) {
+    case freeink::XteinkVerdict::X3Confirmed:
+      return "X3 confirmed";
+    case freeink::XteinkVerdict::X4Confirmed:
+      return "not X3 (X4 fingerprint)";
+    case freeink::XteinkVerdict::Inconclusive:
+      return "inconclusive";
+    default:
+      return "unrecognized";
+  }
+}
+
+const char* displayControllerName(BoardConfig::DisplayController controller) {
+  switch (controller) {
+    case BoardConfig::DisplayController::UC8253:
+      return "UC8253";
+    case BoardConfig::DisplayController::UC8279:
+      return "UC8279d";
+    default:
+      return "unsupported";
+  }
+}
+
 }  // namespace
 
 void setup() {
@@ -45,8 +71,20 @@ void setup() {
   const esp_reset_reason_t resetReason = esp_reset_reason();
   Serial.printf("TamaInk %s\n", TAMAINK_VERSION);
   Serial.printf("Reset reason: %s (%d)\n", resetReasonName(resetReason), static_cast<int>(resetReason));
-  Serial.println("Foundation firmware ready; no hardware drivers initialized.");
+
+  uint8_t detectionScore1 = 0;
+  uint8_t detectionScore2 = 0;
+  const freeink::XteinkVerdict boardVerdict = freeink::detectXteinkVerdict(&detectionScore1, &detectionScore2);
+  Serial.printf("Board detection: %s (I2C scores %u/%u)\n", xteinkVerdictName(boardVerdict), detectionScore1,
+                detectionScore2);
+
+  if (boardVerdict == freeink::XteinkVerdict::X3Confirmed) {
+    freeink::applyXteinkDisplayController();
+    Serial.printf("Display controller: %s\n", displayControllerName(BoardConfig::ACTIVE.displayController));
+    Serial.println("Board detection complete; display not initialized.");
+  } else {
+    Serial.println("Board detection stopped; display pins untouched.");
+  }
 }
 
 void loop() { delay(1000); }
-
