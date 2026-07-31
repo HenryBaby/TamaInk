@@ -64,9 +64,30 @@ documentation and development guide. If code or substantial text is later
 copied or adapted, record the exact revision and paths here and preserve the MIT
 notice.
 
+## Build tooling
+
+These tools run in GitHub Actions and are not linked into TamaInk firmware.
+
+### PlatformIO Core
+
+- Project: <https://github.com/platformio/platformio-core>
+- Version: 6.1.19
+- License: Apache License 2.0
+- Use: CI build orchestration
+
+### GitHub Actions
+
+- `actions/checkout` revision `11d5960a326750d5838078e36cf38b85af677262`
+- `actions/setup-python` revision `a26af69be951a213d495a4c3e4e4022e16d87065`
+- `actions/upload-artifact` revision `ea165f8d65b6e75b540449e92b4886f43607fa02`
+- License: MIT at the pinned upstream revisions
+- Use: CI source checkout, Python setup, and application-image artifact upload
+
+The complete transitive build-tool and ESP32 platform inventory will be
+captured from the first successful CI build before a firmware release.
+
 ## User-supplied Tamagotchi ROM
 
 TamaInk neither contains nor distributes a Tamagotchi ROM. A user's `rom.bin`
 remains external, read-only user data and must never be committed, logged,
 embedded in tests, or included in a release.
-

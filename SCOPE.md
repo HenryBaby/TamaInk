@@ -172,8 +172,9 @@ considered, but authentic sound is out of scope without additional hardware.
 
 Each gate must be reproducible before work depends on it:
 
-1. **Build:** Produce a deterministic application-only `firmware.bin`; report
-   version and reset reason over serial.
+1. **Build:** Use GitHub Actions to produce a deterministic application-only
+   `firmware.bin`; report version and reset reason over serial. Firmware is not
+   built on developer workstations.
 2. **Flash safety:** Prove reversible A/B installation and CrossPoint round-trip
    recovery without changing bootloader or partition-table regions.
 3. **Board detection:** Identify the X3 and its display-controller variant.

@@ -1,0 +1,19 @@
+.pio/
+.vscode/
+platformio.local.ini
+compile_commands.json
+
+# Local firmware and device artifacts
+*.bin
+*.elf
+*.map
+*.save
+*.log
+*.core
+*.dmp
+
+# User-supplied or captured data
+rom.bin
+flash.bin
+*.img
+

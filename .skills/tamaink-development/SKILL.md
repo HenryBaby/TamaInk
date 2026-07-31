@@ -15,12 +15,14 @@ for correctness, recoverability, and reviewable increments before features.
    unstaged diff before Git operations. Never assume branch or remote names.
 3. Detect the actual host shell and use native commands. Do not assume Bash;
    this repository may be developed from PowerShell on Windows.
-4. Inspect the pinned FreeInk and TamaLib sources before relying on an API or
+4. Never compile firmware on the local development machine. Use the GitHub
+   Actions firmware workflow for all PlatformIO builds and artifact validation.
+5. Inspect the pinned FreeInk and TamaLib sources before relying on an API or
    hardware behavior. Do not substitute CrossPoint application abstractions for
    SDK APIs without a demonstrated need.
-5. Identify the current delivery gate from `SCOPE.md`. Do not couple later
+6. Identify the current delivery gate from `SCOPE.md`. Do not couple later
    subsystems into an unproven foundation.
-6. Read [references/licensing-and-provenance.md](references/licensing-and-provenance.md)
+7. Read [references/licensing-and-provenance.md](references/licensing-and-provenance.md)
    completely before adding or adapting external code, wording, data, assets,
    dependencies, or release contents.
 
@@ -135,8 +137,8 @@ Use these evidence levels:
   layout agree with the intended design.
 - **Host tests:** ROM decoding, P1 identification, deterministic stepping,
   serialization, CRC, and recovery logic.
-- **Build tests:** clean release build at dependency/toolchain boundaries;
-  incremental builds during ordinary iteration; application image type and
+- **Build tests:** run only in GitHub Actions; perform two clean builds from the
+  same source and compare them byte-for-byte; verify application image type and
   size below `0x640000`.
 - **Static checks:** formatting, compiler diagnostics, forbidden artifacts, and
   unsafe flash commands.
@@ -161,4 +163,3 @@ Report:
 5. flash or persistence risk, if applicable; and
 6. provenance or license changes, if applicable; and
 7. the next smallest safe increment.
-
