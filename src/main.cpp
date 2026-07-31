@@ -3,6 +3,7 @@
 #include <EInkDisplay.h>
 #include <InputManager.h>
 #include <SDCardManager.h>
+#include <SPI.h>
 #include <XteinkDetect.h>
 #include <esp_system.h>
 #include <cstring>
@@ -202,6 +203,29 @@ void printAdcSnapshot() {
                 classifiedButtonName(group2.button));
 }
 
+bool initializeX3SharedSpi() {
+  const auto& displayPins = BoardConfig::ACTIVE.display;
+  const auto& sdPins = BoardConfig::ACTIVE.sd;
+  if (displayPins.sclk < 0 || displayPins.mosi < 0 || displayPins.cs < 0 || sdPins.miso < 0 || sdPins.cs < 0) {
+    Serial.printf("X3 SPI init skipped: invalid pins (display sclk=%d mosi=%d cs=%d; SD miso=%d cs=%d)\n",
+                  displayPins.sclk, displayPins.mosi, displayPins.cs, sdPins.miso, sdPins.cs);
+    return false;
+  }
+
+  // Keep the SD card deselected before any panel traffic, then initialize the
+  // shared bus with MISO attached so later SPI.begin() calls remain compatible.
+  pinMode(sdPins.cs, OUTPUT);
+  digitalWrite(sdPins.cs, HIGH);
+  if (!SPI.begin(displayPins.sclk, sdPins.miso, displayPins.mosi, displayPins.cs)) {
+    SPI.end();
+    Serial.println("X3 shared SPI init failed");
+    return false;
+  }
+  Serial.printf("X3 shared SPI ready: sclk=%d miso=%d mosi=%d displayCS=%d sdCS=%d\n", displayPins.sclk,
+                sdPins.miso, displayPins.mosi, displayPins.cs, sdPins.cs);
+  return true;
+}
+
 void beginInputDiagnostic() {
   inputManager.begin();
   inputManager.update();
@@ -326,6 +350,7 @@ void setup() {
     const auto& pins = BoardConfig::ACTIVE.display;
     static EInkDisplay display(pins.sclk, pins.mosi, pins.cs, pins.dc, pins.rst, pins.busy);
     display.setDisplayX3();
+    if (!initializeX3SharedSpi()) return;
     display.begin();
     if (!display.framebufferReady()) {
       Serial.println("Display test aborted: framebuffer allocation failed.");
