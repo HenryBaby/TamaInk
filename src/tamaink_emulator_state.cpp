@@ -48,10 +48,10 @@ std::uint32_t crc(const std::uint8_t *p, std::size_t n) {
   return ~c;
 }
 bool valid(const State &s) {
-  if (s.pc > 0x1fff || s.x > 0xfff || s.y > 0xfff || s.a > 0xf || s.b > 0xf ||
+  if (s.pc > 0x1fff || s.next_pc > 0x1fff || s.x > 0xfff || s.y > 0xfff || s.a > 0xf || s.b > 0xf ||
       s.np > 0x1f || s.flags > 0xf || s.program_timer_enabled > 1 ||
       s.cpu_halted > 1 || s.previous_cycles > 12 || s.execution_mode > 5 ||
-      s.sound_enabled > 1 || !s.cpu_timestamp_frequency || !s.cpu_frequency ||
+      s.sound_enabled > 1 || s.buttons > 7 || !s.cpu_timestamp_frequency || !s.cpu_frequency ||
       !s.tamalib_timestamp_frequency || !s.framerate)
     return false;
   for (const auto &i : s.interrupts)
@@ -64,6 +64,7 @@ bool valid(const State &s) {
 }
 void write_payload(Writer &w, const State &s) {
   w.u16(s.pc);
+  w.u16(s.next_pc);
   w.u16(s.x);
   w.u16(s.y);
   for (auto v : {s.a, s.b, s.np, s.sp, s.flags})
@@ -99,9 +100,12 @@ void write_payload(Writer &w, const State &s) {
   w.u32(s.virtual_timestamp);
   w.u32(s.sound_frequency);
   w.u8(s.sound_enabled);
+  for (auto v : s.lcd) w.u32(v);
+  w.u8(s.icons); w.u8(s.buttons);
 }
 void read_payload(Reader &r, State &s) {
   s.pc = r.u16();
+  s.next_pc = r.u16();
   s.x = r.u16();
   s.y = r.u16();
   s.a = r.u8();
@@ -142,6 +146,8 @@ void read_payload(Reader &r, State &s) {
   s.virtual_timestamp = r.u32();
   s.sound_frequency = r.u32();
   s.sound_enabled = r.u8();
+  for (auto &v : s.lcd) v = r.u32();
+  s.icons = r.u8(); s.buttons = r.u8();
 }
 } // namespace
 std::size_t encoded_size() { return kEncodedSize; }

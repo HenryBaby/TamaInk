@@ -32,6 +32,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Apply reviewed TamaLib live-state patch
+        run: bash scripts/apply_tamalib_patch.sh
+
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -52,6 +55,9 @@ jobs:
 
       - name: Run TamaLib adapter deterministic host test
         run: bash test/host/tamalib_adapter_determinism.sh
+
+      - name: Run TamaLib adapter continuation-equivalence sanitizer test
+        run: bash test/host/tamalib_adapter_continuation.sh
 
       - name: Run portable emulator state codec host tests
         run: bash test/host/run_emulator_state_tests.sh

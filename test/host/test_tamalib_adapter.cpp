@@ -1,10 +1,12 @@
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 extern "C" {
 #include "tamalib.h"
 }
 #include "tamaink_tamalib.h"
+#include "tamaink_emulator_state.h"
 
 int main() {
   using namespace tamaink::tamalib;
@@ -32,6 +34,29 @@ int main() {
   assert(adapter.snapshot(&s) == Status::Ok && s.button_interrupt_factor == 0x7);
   assert(adapter.set_button(static_cast<Button>(99), true) == Status::InvalidInput);
   assert(adapter.step(64, &s) == Status::Ok);
+  tamaink::emulator::State saved{};
+  assert(adapter.export_state(&saved) == Status::Ok);
+  const std::uint8_t rom_id[8] = {0}; std::uint8_t blob[tamaink::emulator::kEncodedSize];
+  assert(tamaink::emulator::encode(saved, blob, sizeof blob, rom_id) == sizeof blob);
+  tamaink::emulator::State decoded{};
+  assert(tamaink::emulator::decode(blob, sizeof blob, rom_id, &decoded) == tamaink::emulator::DecodeError::None);
+  auto assert_import_atomic = [&](auto mutate) {
+    tamaink::emulator::State invalid = decoded; mutate(invalid);
+    assert(adapter.import_state(invalid) == Status::InvalidInput);
+    tamaink::emulator::State after{}; std::uint8_t after_blob[ tamaink::emulator::kEncodedSize ];
+    assert(adapter.export_state(&after) == Status::Ok);
+    assert(tamaink::emulator::encode(after, after_blob, sizeof after_blob, rom_id) == sizeof after_blob);
+    assert(std::memcmp(blob, after_blob, sizeof blob) == 0);
+  };
+  assert_import_atomic([](auto& v) { v.interrupts[0].triggered = 2; });
+  assert_import_atomic([](auto& v) { v.input_port_states[0] = 0x10; });
+  assert_import_atomic([](auto& v) { v.program_timer_enabled = 2; });
+  assert_import_atomic([](auto& v) { v.cpu_frequency = 0; });
+  auto sound_state = decoded; sound_state.sound_frequency = 440; sound_state.sound_enabled = 1;
+  assert(adapter.import_state(sound_state) == Status::Ok);
+  tamaink::emulator::State sound_export{};
+  assert(adapter.export_state(&sound_export) == Status::Ok && sound_export.sound_frequency == 440 && sound_export.sound_enabled == 1);
+  assert(adapter.import_state(decoded) == Status::Ok); // restore original cache before continuation
   assert(s.pc == 0x140 && s.tick_counter == 315 && s.timestamp == 315);
   assert(s.icons == 0);
   assert(!s.button_a && !s.button_b && !s.button_c);

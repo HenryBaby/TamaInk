@@ -24,6 +24,8 @@ std::uint32_t g_timestamp = 0;
 std::uint32_t g_lcd[16] = {};
 std::uint8_t g_icons = 0;
 bool g_buttons[3] = {};
+std::uint32_t g_sound_frequency = 0;
+bool g_sound_enabled = false;
 
 void* no_malloc(u32_t) { return nullptr; }
 void no_free(void*) {}
@@ -45,8 +47,8 @@ void set_lcd_icon(u8_t icon, bool_t val) {
     if (val) g_icons |= bit; else g_icons &= static_cast<std::uint8_t>(~bit);
   }
 }
-void no_frequency(u32_t) {}
-void no_play(bool_t) {}
+void no_frequency(u32_t hz) { g_sound_frequency = hz; }
+void no_play(bool_t on) { g_sound_enabled = on != 0; }
 int no_handler() { return 0; }
 
 hal_t g_hal = {no_malloc, no_free, no_void, no_log_enabled, no_log,
@@ -68,6 +70,21 @@ void fill_snapshot(Snapshot* out) {
   std::memcpy(out->lcd, g_lcd, sizeof(g_lcd));
   out->icons = g_icons;
   out->button_a = g_buttons[0]; out->button_b = g_buttons[1]; out->button_c = g_buttons[2];
+}
+
+bool valid_state(const emulator::State& s) {
+  return s.pc <= 0x1fff && s.next_pc <= 0x1fff && s.x <= 0xfff && s.y <= 0xfff &&
+         s.a <= 0xf && s.b <= 0xf && s.np <= 0x1f && s.flags <= 0xf &&
+         s.program_timer_enabled <= 1 && s.cpu_halted <= 1 && s.previous_cycles <= 12 &&
+         s.execution_mode <= 5 && s.sound_enabled <= 1 && s.buttons <= 7 &&
+         s.cpu_timestamp_frequency && s.cpu_frequency && s.tamalib_timestamp_frequency &&
+         s.framerate && s.input_port_states[0] <= 0xf && s.input_port_states[1] <= 0xf &&
+         s.interrupts[0].factor <= 0xf && s.interrupts[0].mask <= 0xf && s.interrupts[0].triggered <= 1 &&
+         s.interrupts[1].factor <= 0xf && s.interrupts[1].mask <= 0xf && s.interrupts[1].triggered <= 1 &&
+         s.interrupts[2].factor <= 0xf && s.interrupts[2].mask <= 0xf && s.interrupts[2].triggered <= 1 &&
+         s.interrupts[3].factor <= 0xf && s.interrupts[3].mask <= 0xf && s.interrupts[3].triggered <= 1 &&
+         s.interrupts[4].factor <= 0xf && s.interrupts[4].mask <= 0xf && s.interrupts[4].triggered <= 1 &&
+         s.interrupts[5].factor <= 0xf && s.interrupts[5].mask <= 0xf && s.interrupts[5].triggered <= 1;
 }
 }
 
@@ -116,6 +133,53 @@ Status Adapter::snapshot(Snapshot* out) const {
   if (g_active != this) return Status::NotInitialized;
   if (!out) return Status::InvalidInput;
   fill_snapshot(out); return Status::Ok;
+}
+
+Status Adapter::export_state(emulator::State* out) const {
+  if (g_active != this) return Status::NotInitialized;
+  if (!out) return Status::InvalidInput;
+  tamalib_extended_state_t ext{};
+  tamalib_export_extended_state(&ext);
+  emulator::State tmp{}; auto& c = ext.cpu;
+  tmp.pc = c.pc; tmp.next_pc = c.next_pc; tmp.x = c.x; tmp.y = c.y;
+  tmp.a = c.a; tmp.b = c.b; tmp.np = c.np; tmp.sp = c.sp; tmp.flags = c.flags;
+  tmp.tick_counter = c.tick_counter;
+  std::memcpy(tmp.clock_timer_timestamps, c.clk_timer_timestamps, sizeof tmp.clock_timer_timestamps);
+  tmp.program_timer_timestamp = c.prog_timer_timestamp;
+  tmp.program_timer_enabled = c.prog_timer_enabled; tmp.program_timer_data = c.prog_timer_data;
+  tmp.program_timer_reload = c.prog_timer_rld; tmp.call_depth = c.call_depth;
+  for (int i = 0; i < 6; ++i) { tmp.interrupts[i].factor = c.interrupts[i].factor_flag_reg; tmp.interrupts[i].mask = c.interrupts[i].mask_reg; tmp.interrupts[i].triggered = c.interrupts[i].triggered; tmp.interrupts[i].vector = c.interrupts[i].vector; }
+  tmp.cpu_halted = c.cpu_halted; std::memcpy(tmp.memory, c.memory, sizeof tmp.memory);
+  tmp.input_port_states[0] = c.input_states[0]; tmp.input_port_states[1] = c.input_states[1];
+  tmp.cpu_timestamp_frequency = c.ts_freq; tmp.reference_timestamp = c.ref_ts;
+  tmp.cpu_frequency = c.cpu_frequency; tmp.scaled_cycle_accumulator = c.scaled_cycle_accumulator;
+  tmp.speed_ratio = c.speed_ratio; tmp.previous_cycles = c.previous_cycles;
+  tmp.execution_mode = static_cast<std::uint8_t>(ext.exec_mode); tmp.execution_step_depth = ext.step_depth;
+  tmp.screen_timestamp = ext.screen_ts; tmp.tamalib_timestamp_frequency = ext.ts_freq;
+  tmp.framerate = ext.framerate; tmp.virtual_timestamp = g_timestamp;
+  tmp.sound_frequency = g_sound_frequency; tmp.sound_enabled = g_sound_enabled;
+  std::memcpy(tmp.lcd, g_lcd, sizeof tmp.lcd);
+  tmp.icons = g_icons; tmp.buttons = (g_buttons[0] ? 1 : 0) | (g_buttons[1] ? 2 : 0) | (g_buttons[2] ? 4 : 0);
+  *out = tmp;
+  return Status::Ok;
+}
+
+Status Adapter::import_state(const emulator::State& s) {
+  if (g_active != this) return Status::NotInitialized;
+  if (!valid_state(s)) return Status::InvalidInput;
+  tamalib_extended_state_t ext{};
+  auto& c = ext.cpu;
+  c.pc=s.pc; c.next_pc=s.next_pc; c.x=s.x; c.y=s.y; c.a=s.a; c.b=s.b; c.np=s.np; c.sp=s.sp; c.flags=s.flags;
+  c.tick_counter=s.tick_counter; std::memcpy(c.clk_timer_timestamps,s.clock_timer_timestamps,sizeof c.clk_timer_timestamps);
+  c.prog_timer_timestamp=s.program_timer_timestamp; c.prog_timer_enabled=s.program_timer_enabled; c.prog_timer_data=s.program_timer_data; c.prog_timer_rld=s.program_timer_reload; c.call_depth=s.call_depth;
+  for(int i=0;i<6;++i){ c.interrupts[i].factor_flag_reg=s.interrupts[i].factor; c.interrupts[i].mask_reg=s.interrupts[i].mask; c.interrupts[i].triggered=s.interrupts[i].triggered; c.interrupts[i].vector=s.interrupts[i].vector; }
+  c.cpu_halted=s.cpu_halted; std::memcpy(c.memory,s.memory,sizeof c.memory); c.input_states[0]=s.input_port_states[0]; c.input_states[1]=s.input_port_states[1]; c.ts_freq=s.cpu_timestamp_frequency; c.ref_ts=s.reference_timestamp; c.cpu_frequency=s.cpu_frequency; c.scaled_cycle_accumulator=s.scaled_cycle_accumulator; c.speed_ratio=s.speed_ratio; c.previous_cycles=s.previous_cycles;
+  ext.exec_mode=static_cast<exec_mode_t>(s.execution_mode); ext.step_depth=s.execution_step_depth; ext.screen_ts=s.screen_timestamp; ext.ts_freq=s.tamalib_timestamp_frequency; ext.framerate=s.framerate;
+  if (!tamalib_import_extended_state(&ext)) return Status::InvalidInput;
+  g_timestamp=s.virtual_timestamp; std::memcpy(g_lcd,s.lcd,sizeof g_lcd); g_icons=s.icons;
+  g_sound_frequency = s.sound_frequency; g_sound_enabled = s.sound_enabled != 0;
+  for(int i=0;i<3;++i) g_buttons[i]=(s.buttons & (1u<<i)) != 0;
+  return Status::Ok;
 }
 
 }  // namespace tamaink::tamalib

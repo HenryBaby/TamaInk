@@ -136,8 +136,13 @@ input, emulation, persistence, timekeeping, and long-duration behavior have all
 been validated on physical hardware.
 
 The host-tested portable emulator state codec is a bounded, versioned snapshot
-format for a future upstream TamaLib bridge. Live save/resume is not validated:
-complete upstream export/import of hidden emulator state remains pending.
+format with a live TamaLib bridge. Host builds apply the reviewed patch in
+`patches/tamalib-live-state.patch` to the pinned TamaLib revision before
+compiling the live bridge. The repository gitlink remains pinned; CI
+intentionally leaves the build worktree patched and dirty. The
+patch exposes complete CPU/TamaLib continuation state for deterministic
+save/resume tests using synthetic ROM buffers only. This is host evidence,
+not hardware validation.
 
 ## Contributing
 

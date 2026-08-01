@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "tamaink_emulator_state.h"
 
 namespace tamaink::tamalib {
 
@@ -41,6 +42,8 @@ class Adapter {
   Status step(std::size_t count, Snapshot* snapshot = nullptr);
   Status set_button(Button button, bool pressed);
   Status snapshot(Snapshot* out) const;
+  Status export_state(emulator::State* out) const;
+  Status import_state(const emulator::State& state);
 };
 
 }  // namespace tamaink::tamalib

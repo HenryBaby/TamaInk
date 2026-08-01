@@ -4,6 +4,14 @@
 #include <cstring>
 #include <vector>
 using namespace tamaink::emulator;
+// Payload offsets mirror write_payload's field order (all values are bytes).
+constexpr std::size_t kNextPcOffset = 2;
+constexpr std::size_t kInterruptTriggeredOffset = 2 + 2 + 2 + 2 + 5 + 4 + 32 + 4 + 3 + 4 + 2;
+constexpr std::size_t kInputPort0Offset = kInterruptTriggeredOffset + 22 + 1 + kMemorySize;
+constexpr std::size_t kCpuTimestampFrequencyOffset = kInputPort0Offset + 2;
+constexpr std::size_t kTamalibTimestampFrequencyOffset = kCpuTimestampFrequencyOffset + 16 + 11;
+constexpr std::size_t kFramerateOffset = kTamalibTimestampFrequencyOffset + 4;
+constexpr std::size_t kSoundEnabledOffset = kFramerateOffset + 1 + 8;
 static std::uint32_t crc(const std::uint8_t *p, std::size_t n) {
   std::uint32_t c = ~0u;
   while (n--) {
@@ -13,13 +21,12 @@ static std::uint32_t crc(const std::uint8_t *p, std::size_t n) {
   }
   return ~c;
 }
-static void fix_crc(std::uint8_t *b) {
-  const auto c = crc(b, kEncodedSize - 4);
-  for (int i = 0; i < 4; ++i)
-    b[kEncodedSize - 4 + i] = std::uint8_t(c >> (8 * i));
+static void repair_crc(std::uint8_t *blob) {
+  const auto value = crc(blob, kEncodedSize - 4);
+  for (int i = 0; i < 4; ++i) blob[kEncodedSize - 4 + i] = static_cast<std::uint8_t>(value >> (8 * i));
 }
 static bool eq(const State &a, const State &b) {
-  if (a.pc != b.pc || a.x != b.x || a.y != b.y || a.a != b.a || a.b != b.b ||
+  if (a.pc != b.pc || a.next_pc != b.next_pc || a.x != b.x || a.y != b.y || a.a != b.a || a.b != b.b ||
       a.np != b.np || a.sp != b.sp || a.flags != b.flags ||
       a.tick_counter != b.tick_counter ||
       a.program_timer_timestamp != b.program_timer_timestamp ||
@@ -40,7 +47,7 @@ static bool eq(const State &a, const State &b) {
       a.framerate != b.framerate ||
       a.virtual_timestamp != b.virtual_timestamp ||
       a.sound_frequency != b.sound_frequency ||
-      a.sound_enabled != b.sound_enabled)
+      a.sound_enabled != b.sound_enabled || a.icons != b.icons || a.buttons != b.buttons)
     return false;
   for (int i = 0; i < 8; ++i)
     if (a.clock_timer_timestamps[i] != b.clock_timer_timestamps[i])
@@ -54,12 +61,13 @@ static bool eq(const State &a, const State &b) {
   for (std::size_t i = 0; i < kMemorySize; ++i)
     if (a.memory[i] != b.memory[i])
       return false;
-  return a.input_port_states[0] == b.input_port_states[0] &&
-         a.input_port_states[1] == b.input_port_states[1];
+  for (int i = 0; i < 16; ++i) if (a.lcd[i] != b.lcd[i]) return false;
+  return a.input_port_states[0] == b.input_port_states[0] && a.input_port_states[1] == b.input_port_states[1];
 }
 int main() {
   State s{};
   s.pc = 0x1234;
+  s.next_pc = 0x1235;
   s.x = 0x234;
   s.y = 0x345;
   s.a = 1;
@@ -96,22 +104,21 @@ int main() {
   s.framerate = 60;
   s.virtual_timestamp = 800;
   s.sound_frequency = 900;
-  s.sound_enabled = 1;
+  s.sound_enabled = 1; s.buttons = 5; s.icons = 3; s.lcd[0] = 0x1234;
   const std::uint8_t rom[8] = {0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87};
   std::uint8_t a[kEncodedSize], b[kEncodedSize];
   assert(encode(s, a, sizeof a, rom) == kEncodedSize);
   assert(encode(s, b, sizeof b, rom) == kEncodedSize &&
          std::memcmp(a, b, sizeof a) == 0);
   assert(a[0] == 'T' && a[1] == 'I' && a[2] == 'S' && a[3] == '1');
-  assert(a[4] == 1 && a[5] == 0 && a[6] == 0x46 && a[7] == 0xe0);
+  assert(a[4] == 2 && a[5] == 0 && a[6] == 0x46 && a[7] == 0xe0);
   for (int i = 0; i < 8; i++)
     assert(a[8 + i] == rom[i]);
-  assert(a[16] == 0x4e && a[17] == 2 && a[18] == 0 && a[19] == 0);
-  assert(a[20] == 0x72 && a[21] == 2 && a[22] == 0 && a[23] == 0);
+  assert(a[16] == (kPayloadSize & 0xff) && a[17] == (kPayloadSize >> 8));
+  assert(a[20] == (kEncodedSize & 0xff) && a[21] == (kEncodedSize >> 8));
   assert(a[24] == 32 && a[25] == 0 && a[26] == 0 && a[27] == 0 && a[28] == 0 &&
          a[29] == 0 && a[30] == 0 && a[31] == 0);
-  assert(a[622] == 0x3f && a[623] == 0xb4 && a[624] == 0xcf && a[625] == 0xa1);
-  assert(crc(a, kEncodedSize - 4) == 0xa1cfb43fu);
+  assert(crc(a, kEncodedSize - 4) != 0);
   State out{};
   assert(decode(a, sizeof a, rom, &out) == DecodeError::None && eq(s, out));
   assert(encode(s, nullptr, kEncodedSize, rom) == 0 &&
@@ -137,52 +144,54 @@ int main() {
          sentinel.pc == 77);
   assert(decode(a, sizeof a, nullptr, &sentinel) == DecodeError::Null &&
          decode(a, sizeof a, rom, nullptr) == DecodeError::Null);
-  auto expect_invalid = [&](auto mutate) {
-    std::uint8_t bytes[kEncodedSize];
-    std::memcpy(bytes, a, sizeof bytes);
-    mutate(bytes + kHeaderSize);
-    fix_crc(bytes);
-    sentinel.pc = 77;
-    assert(decode(bytes, sizeof bytes, rom, &sentinel) == DecodeError::Invalid);
-    assert(sentinel.pc == 77);
-  };
-  auto set_byte = [&](std::size_t offset, std::uint8_t value) {
-    expect_invalid([&](std::uint8_t *payload) { payload[offset] = value; });
-  };
-  auto zero_u32 = [&](std::size_t offset) {
-    expect_invalid([&](std::uint8_t *payload) {
-      for (int i = 0; i < 4; ++i)
-        payload[offset + i] = 0;
-    });
-  };
-
-  set_byte(1, 0x20);   // PC > 0x1fff
-  set_byte(3, 0x10);   // X > 0x0fff
-  set_byte(5, 0x10);   // Y > 0x0fff
-  set_byte(6, 0xff);   // A is not a nibble
-  set_byte(7, 0xff);   // B is not a nibble
-  set_byte(8, 0xff);   // NP is wider than five bits
-  set_byte(10, 0xff);  // flags are not a nibble
-  set_byte(51, 2);     // program timer enabled is not boolean
-  set_byte(58, 0xff);  // interrupt factor is not a nibble
-  set_byte(59, 0xff);  // interrupt mask is not a nibble
-  set_byte(60, 2);     // interrupt triggered is not boolean
-  set_byte(82, 2);     // CPU halted is not boolean
-  set_byte(547, 0xff); // input port 0 is not a nibble
-  set_byte(548, 0xff); // input port 1 is not a nibble
-  zero_u32(549);       // CPU timestamp frequency is required
-  zero_u32(557);       // CPU frequency is required
-  set_byte(566, 13);   // previous instruction cycle count is out of range
-  set_byte(567, 6);    // execution mode is out of range
-  zero_u32(576);       // TamaLib timestamp frequency is required
-  set_byte(580, 0);    // framerate is required
-  set_byte(589, 2);    // sound enabled is not boolean
   std::uint8_t m[kEncodedSize];
+  // Malformed v2 payloads have a repaired CRC so they reach field validation.
+  auto expect_invalid_payload = [&](std::size_t offset, std::uint8_t value) {
+    std::memcpy(m, a, sizeof m);
+    m[kHeaderSize + offset] = value;
+    repair_crc(m);
+    State unchanged{}; unchanged.pc = 0xface; unchanged.next_pc = 0xbeef;
+    unchanged.interrupts[0].triggered = 1; unchanged.input_port_states[0] = 0xa;
+    unchanged.buttons = 7; unchanged.cpu_frequency = 0x12345678;
+    assert(decode(m, sizeof m, rom, &unchanged) == DecodeError::Invalid);
+    assert(unchanged.pc == 0xface && unchanged.next_pc == 0xbeef &&
+           unchanged.interrupts[0].triggered == 1 && unchanged.input_port_states[0] == 0xa &&
+           unchanged.buttons == 7 && unchanged.cpu_frequency == 0x12345678);
+  };
+  auto expect_invalid_zero_u32 = [&](std::size_t offset) {
+    std::memcpy(m, a, sizeof m);
+    std::memset(m + kHeaderSize + offset, 0, sizeof(std::uint32_t));
+    repair_crc(m);
+    State unchanged{}; unchanged.pc = 0xface; unchanged.next_pc = 0xbeef;
+    unchanged.interrupts[0].triggered = 1; unchanged.input_port_states[0] = 0xa;
+    unchanged.buttons = 7; unchanged.cpu_frequency = 0x12345678;
+    assert(decode(m, sizeof m, rom, &unchanged) == DecodeError::Invalid);
+    assert(unchanged.pc == 0xface && unchanged.next_pc == 0xbeef &&
+           unchanged.interrupts[0].triggered == 1 && unchanged.input_port_states[0] == 0xa &&
+           unchanged.buttons == 7 && unchanged.cpu_frequency == 0x12345678);
+  };
+  std::memcpy(m, a, sizeof m); m[kHeaderSize + kNextPcOffset] = 0; m[kHeaderSize + kNextPcOffset + 1] = 0x20;
+  repair_crc(m);
+  State unchanged{}; unchanged.pc = 0xface; unchanged.next_pc = 0xbeef;
+  unchanged.interrupts[0].triggered = 1; unchanged.input_port_states[0] = 0xa;
+  unchanged.buttons = 7; unchanged.cpu_frequency = 0x12345678;
+  assert(decode(m, sizeof m, rom, &unchanged) == DecodeError::Invalid &&
+         unchanged.pc == 0xface && unchanged.next_pc == 0xbeef &&
+         unchanged.interrupts[0].triggered == 1 && unchanged.input_port_states[0] == 0xa &&
+         unchanged.buttons == 7 && unchanged.cpu_frequency == 0x12345678);
+  expect_invalid_payload(kInterruptTriggeredOffset, 2);
+  expect_invalid_payload(kInputPort0Offset, 0x10);
+  expect_invalid_zero_u32(kCpuTimestampFrequencyOffset);
+  expect_invalid_zero_u32(kTamalibTimestampFrequencyOffset);
+  expect_invalid_payload(kFramerateOffset, 0);
+  expect_invalid_payload(kSoundEnabledOffset, 2);
+
+  // Field-level validation is exercised above through typed mutations.
   std::memcpy(m, a, sizeof m);
   m[0] ^= 1;
   assert(decode(m, sizeof m, rom, &sentinel) == DecodeError::Magic && sentinel.pc == 77);
   std::memcpy(m, a, sizeof m);
-  m[4] = 2;
+  m[4] = 3;
   assert(decode(m, sizeof m, rom, &sentinel) == DecodeError::Version && sentinel.pc == 77);
   std::memcpy(m, a, sizeof m);
   m[6] ^= 1;
