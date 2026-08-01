@@ -25,7 +25,16 @@ if grep -Eq '^[[:space:]]*#define[[:space:]]+E0C6S48_SUPPORT[[:space:]]*$' "$tmp
   exit 1
 fi
 
-cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I "$tmp/tamalib" \
-  "$tmp/tamalib/cpu.c" "$tmp/tamalib/hw.c" "$tmp/tamalib/tamalib.c" \
-  test/host/test_tamalib_smoke.c -o "$tmp/tamalib-smoke"
+common_flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I "$tmp/tamalib")
+objects=()
+for source in cpu hw tamalib; do
+  object="$tmp/$source.o"
+  cc "${common_flags[@]}" -Wno-error=unused-parameter \
+    -c "$tmp/tamalib/$source.c" -o "$object"
+  objects+=("$object")
+done
+
+cc "${common_flags[@]}" -c test/host/test_tamalib_smoke.c -o "$tmp/smoke.o"
+cc -fsanitize=address,undefined "${objects[@]}" "$tmp/smoke.o" \
+  -o "$tmp/tamalib-smoke"
 "$tmp/tamalib-smoke"
