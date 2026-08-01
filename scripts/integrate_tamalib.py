@@ -7,7 +7,8 @@ import subprocess
 project = Path(env.subst("$PROJECT_DIR"))
 source = project / "tamalib"
 build_root = Path(env.subst("$BUILD_DIR"))
-stage = build_root / "tamalib-staged"
+staging_root = Path(env.subst("$PROJECT_WORKSPACE_DIR")) / "tamaink-tamalib-source"
+stage = staging_root / "tamalib"
 expected_revision = "ce304d55f9a73c60232ce3f552e7983db3fa399c"
 
 try:
@@ -19,12 +20,12 @@ except (OSError, subprocess.CalledProcessError) as exc:
 if revision != expected_revision:
     raise RuntimeError(f"unsupported tamalib revision: {revision}")
 
-if stage.exists():
-    shutil.rmtree(stage)
+if staging_root.exists():
+    shutil.rmtree(staging_root)
 stage.mkdir(parents=True)
 for name in ("cpu.c", "cpu.h", "hw.c", "hw.h", "tamalib.c", "tamalib.h", "hal.h"):
     shutil.copyfile(source / name, stage / name)
-shutil.copyfile(source / "hal_types.h.template", build_root / "hal_types.h")
+shutil.copyfile(source / "hal_types.h.template", staging_root / "hal_types.h")
 
 markers = ("previous_cycles", "tamalib_export_extended_state", "tamalib_import_extended_state")
 combined = "".join((stage / name).read_text(encoding="utf-8") for name in ("cpu.c", "cpu.h", "tamalib.c", "tamalib.h"))
@@ -52,5 +53,5 @@ if text.count("#define E0C6S46_SUPPORT") != 1:
 cpu.write_text(text, encoding="utf-8")
 
 env.Append(CPPDEFINES=["TAMAINK_TAMALIB", "E0C6S46_SUPPORT"])
-env.Append(CPPPATH=[str(stage), str(build_root)])
-env.BuildSources(str(stage), str(stage), src_filter=["+<*.c>"])
+env.Append(CPPPATH=[str(stage), str(staging_root)])
+env.BuildSources(str(build_root / "tamalib"), str(stage), src_filter=["+<*.c>"])
