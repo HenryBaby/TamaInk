@@ -13,6 +13,10 @@
 #include "tamaink_persistence.h"
 #include "tamaink_rom.h"
 #include "tamaink_tamalib.h"
+#include "tamaink_renderer.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 
 #ifndef TAMAINK_VERSION
 #define TAMAINK_VERSION "unknown"
@@ -33,8 +37,73 @@ std::uint16_t* emulatorProgram = nullptr;
 tamaink::tamalib::Snapshot emulatorSnapshot{};
 tamaink::tamalib::Snapshot emulatorPrinted{};
 bool emulatorPrintedValid = false;
-bool emulatorFramePending = false;
+tamaink::tamalib::Snapshot emulatorObserved{};
+bool emulatorObservedValid = false;
+bool serialFramePending = false;
+bool rendererFramePending = false;
 unsigned long emulatorLastPrintAt = 0;
+EInkDisplay* rendererDisplay = nullptr;
+QueueHandle_t rendererQueue = nullptr;
+TaskHandle_t rendererTaskHandle = nullptr;
+bool rendererEnabled = false;
+bool rendererBegun = false;
+bool initializeX3SharedSpi();
+
+void rendererTask(void*) {
+  tamaink::tamalib::Snapshot frame{};
+  bool first = true;
+  unsigned long lastRefresh = 0;
+  for (;;) {
+    if (xQueueReceive(rendererQueue, &frame, portMAX_DELAY) != pdTRUE) continue;
+    while (rendererDisplay->refreshBusy()) vTaskDelay(pdMS_TO_TICKS(20));
+    const unsigned long now = millis();
+    if (!first && now - lastRefresh < 1000) vTaskDelay(pdMS_TO_TICKS(1000 - (now - lastRefresh)));
+    tamaink::tamalib::Snapshot newest{};
+    while (xQueueReceive(rendererQueue, &newest, 0) == pdTRUE) frame = newest;
+    const auto status = tamaink::render::snapshot(frame, rendererDisplay->getFrameBuffer(),
+        rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
+        rendererDisplay->getDisplayWidthBytes(), 12, 72, 24);
+    if (status != tamaink::render::Status::Ok) { Serial.println("Display renderer: frame geometry rejected"); continue; }
+    rendererDisplay->displayBuffer(first ? EInkDisplay::FULL_REFRESH : EInkDisplay::FAST_REFRESH, false);
+    if (first) {
+      while (rendererDisplay->refreshBusy()) vTaskDelay(pdMS_TO_TICKS(20));
+      rendererDisplay->skipInitialResync();
+    }
+    lastRefresh = millis(); first = false;
+    vTaskDelay(1);
+  }
+}
+
+void stopRenderer() {
+  if (rendererTaskHandle) { vTaskDelete(rendererTaskHandle); rendererTaskHandle = nullptr; }
+  if (rendererQueue) { vQueueDelete(rendererQueue); rendererQueue = nullptr; }
+  if (rendererDisplay) { rendererDisplay->releaseBuffers(); if (rendererBegun) rendererDisplay->deepSleep(); delete rendererDisplay; rendererDisplay = nullptr; }
+  rendererBegun = false;
+  rendererEnabled = false;
+}
+
+bool startRenderer() {
+  if (BoardConfig::ACTIVE.displayController != BoardConfig::DisplayController::UC8253) {
+    Serial.println("Display rendering disabled: controller is not UC8253; serial emulator remains active");
+    return false;
+  }
+  const auto& p = BoardConfig::ACTIVE.display;
+  rendererDisplay = new (std::nothrow) EInkDisplay(p.sclk, p.mosi, p.cs, p.dc, p.rst, p.busy);
+  if (!rendererDisplay) { Serial.println("Display renderer: EInkDisplay allocation failed"); return false; }
+  rendererDisplay->setDisplayX3();
+  if (!initializeX3SharedSpi()) { delete rendererDisplay; rendererDisplay = nullptr; return false; }
+  rendererDisplay->begin();
+  rendererBegun = true;
+  if (!rendererDisplay->framebufferReady()) { Serial.println("Display renderer: framebuffer allocation failed"); stopRenderer(); return false; }
+  rendererQueue = xQueueCreate(1, sizeof(tamaink::tamalib::Snapshot));
+  if (!rendererQueue) { Serial.println("Display renderer: queue allocation failed"); stopRenderer(); return false; }
+  if (xTaskCreate(rendererTask, "tama-render", 4096, nullptr, 1, &rendererTaskHandle) != pdPASS) {
+    Serial.println("Display renderer: task allocation failed"); stopRenderer(); return false;
+  }
+  rendererEnabled = true;
+  Serial.println("Display renderer: UC8253 X3 active (24x scale, centered; icons omitted)");
+  return true;
+}
 
 struct RomFileSource { FsFile* file; };
 bool romSize(void* context, size_t* size) {
@@ -106,7 +175,8 @@ bool startEmulator() {
   emulatorActive = true;
   Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; display refresh bypassed");
   printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
-  emulatorFramePending = false; emulatorLastPrintAt = millis();
+  emulatorObserved = emulatorSnapshot; emulatorObservedValid = true;
+  serialFramePending = false; rendererFramePending = false; emulatorLastPrintAt = millis();
   return true;
 }
 bool persistenceReady = false;
@@ -656,6 +726,7 @@ void setup() {
       Serial.println("Emulator: SD mount failed; continuing hardware diagnostics");
     } else if (startEmulator()) {
       beginInputDiagnostic();
+      if (startRenderer()) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
       return;
     }
 
@@ -712,18 +783,25 @@ void loop() {
   if (emulatorActive) {
     updateEmulatorInput();
     emulator.step(64, &emulatorSnapshot);
-    if (!emulatorPrintedValid || std::memcmp(emulatorSnapshot.lcd, emulatorPrinted.lcd, sizeof emulatorSnapshot.lcd) != 0 ||
-        emulatorSnapshot.icons != emulatorPrinted.icons) {
-      emulatorFramePending = true;
+    const bool lcdChanged = !emulatorObservedValid ||
+        std::memcmp(emulatorSnapshot.lcd, emulatorObserved.lcd, sizeof emulatorSnapshot.lcd) != 0;
+    const bool iconChanged = !emulatorObservedValid || emulatorSnapshot.icons != emulatorObserved.icons;
+    if (lcdChanged || iconChanged) {
+      emulatorObserved = emulatorSnapshot;
+      emulatorObservedValid = true;
+      serialFramePending = true;
+      if (lcdChanged) rendererFramePending = true;
     }
     const unsigned long now = millis();
-    if (emulatorFramePending && now - emulatorLastPrintAt >= EMULATOR_SERIAL_FRAME_INTERVAL_MS) {
+    if (serialFramePending && now - emulatorLastPrintAt >= EMULATOR_SERIAL_FRAME_INTERVAL_MS) {
       printEmulatorSnapshot(emulatorSnapshot);
       emulatorPrinted = emulatorSnapshot;
       emulatorPrintedValid = true;
-      emulatorFramePending = false;
+      serialFramePending = false;
       emulatorLastPrintAt = now;
     }
+    if (rendererEnabled && rendererFramePending && xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+      rendererFramePending = false;
     delay(0);
     return;
   }

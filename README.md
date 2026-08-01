@@ -26,9 +26,16 @@ proven independently before later work is allowed to depend on it.
 | E-ink refresh modes | UC8253 full validated; UC8253 half/fast and UC8279d differential validation in progress |
 | Physical buttons | Validated on a UC8253 X3 |
 | microSD, RTC, and battery | microSD read-only validated on a UC8253 X3; RTC and battery gate in progress (not hardware validated) |
-| Tamagotchi P1 emulation | Device serial-only path integrated (E0C6S46 sources patched in CI); hardware validation pending |
+| Tamagotchi P1 emulation | Device serial path plus UC8253 X3 sampled LCD rendering integrated; hardware validation pending |
 | ROM validation (read-only packed P1 loading) | Device `/rom.bin` streaming validation integrated; hardware validation pending |
 | Persistent storage diagnostic | In progress (two-generation recovery gate) |
+
+The first rendering increment is build-integrated but hardware-pending. It maps
+the 32x16 LCD to centered 24x24 black cells (origin 12,72) and deliberately
+omits icons until placement semantics are proven. UC8279d and other controllers
+keep the serial emulator active with rendering disabled. The renderer performs
+one initial full refresh, then UC8253 fast refreshes no more often than once per
+second; no periodic cleaning refresh is enabled in this increment.
 
 The complete requirements, safety contract, and delivery gates are documented
 in [SCOPE.md](SCOPE.md).

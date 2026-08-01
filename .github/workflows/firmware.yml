@@ -62,6 +62,9 @@ jobs:
       - name: Run portable emulator state codec host tests
         run: bash test/host/run_emulator_state_tests.sh
 
+      - name: Run LCD renderer host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer.cpp test/host/test_renderer.cpp -o /tmp/tamaink-renderer-tests && /tmp/tamaink-renderer-tests
+
       - name: Set reproducible build timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
