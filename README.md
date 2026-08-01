@@ -30,9 +30,13 @@ proven independently before later work is allowed to depend on it.
 | ROM validation (read-only packed P1 loading) | Device `/rom.bin` streaming validation integrated; hardware validation pending |
 | Persistent storage diagnostic | In progress (two-generation recovery gate) |
 
-The first rendering increment is build-integrated but hardware-pending. It maps
-the 32x16 LCD to centered 24x24 black cells (origin 12,72) and deliberately
-omits icons until placement semantics are proven. UC8279d and other controllers
+The first rendering increment is build-integrated but hardware-pending. On the
+X3, it maps the 32x16 LCD counterclockwise into a centered portrait footprint:
+16x scale, 256x512 pixels at origin (268,8), producing an upright 512x256 view
+when the device buttons are at the bottom. In y-down coordinates, logical
+(column,row) maps to physical (row,31-column); the renderer also retains an
+explicit unrotated mode for host tests. Icons are deliberately omitted until
+placement semantics are proven. UC8279d and other controllers
 keep the serial emulator active with rendering disabled. The renderer performs
 one initial full refresh, then UC8253 fast refreshes no more often than once per
 second; no periodic cleaning refresh is enabled in this increment.

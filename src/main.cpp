@@ -62,7 +62,7 @@ void rendererTask(void*) {
     while (xQueueReceive(rendererQueue, &newest, 0) == pdTRUE) frame = newest;
     const auto status = tamaink::render::snapshot(frame, rendererDisplay->getFrameBuffer(),
         rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
-        rendererDisplay->getDisplayWidthBytes(), 12, 72, 24);
+        rendererDisplay->getDisplayWidthBytes(), 268, 8, 16, tamaink::render::Rotation::CounterClockwise90);
     if (status != tamaink::render::Status::Ok) { Serial.println("Display renderer: frame geometry rejected"); continue; }
     rendererDisplay->displayBuffer(first ? EInkDisplay::FULL_REFRESH : EInkDisplay::FAST_REFRESH, false);
     if (first) {
@@ -101,7 +101,7 @@ bool startRenderer() {
     Serial.println("Display renderer: task allocation failed"); stopRenderer(); return false;
   }
   rendererEnabled = true;
-  Serial.println("Display renderer: UC8253 X3 active (24x scale, centered; icons omitted)");
+  Serial.println("Display renderer: UC8253 X3 active (16x scale, centered CCW portrait; icons omitted)");
   return true;
 }
 
