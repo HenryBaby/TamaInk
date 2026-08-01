@@ -23,6 +23,7 @@ namespace {
 constexpr uint8_t BUTTON_COUNT = InputManager::BTN_POWER + 1;
 constexpr unsigned long INPUT_REPOLL_MS = 6;
 constexpr unsigned long HOLD_REPORT_INTERVAL_MS = 1000;
+constexpr unsigned long EMULATOR_SERIAL_FRAME_INTERVAL_MS = 250;
 
 InputManager inputManager;
 bool inputReady = false;
@@ -32,6 +33,8 @@ std::uint16_t* emulatorProgram = nullptr;
 tamaink::tamalib::Snapshot emulatorSnapshot{};
 tamaink::tamalib::Snapshot emulatorPrinted{};
 bool emulatorPrintedValid = false;
+bool emulatorFramePending = false;
+unsigned long emulatorLastPrintAt = 0;
 
 struct RomFileSource { FsFile* file; };
 bool romSize(void* context, size_t* size) {
@@ -69,9 +72,18 @@ void printEmulatorSnapshot(const tamaink::tamalib::Snapshot& s) {
 void updateEmulatorInput() {
   inputManager.update();
   const uint8_t physical[3] = {InputManager::BTN_BACK, InputManager::BTN_CONFIRM, InputManager::BTN_POWER};
+  const char labels[3] = {'A', 'B', 'C'};
   for (unsigned i = 0; i < 3; ++i) {
-    if (inputManager.wasPressed(physical[i])) emulator.set_button(static_cast<tamaink::tamalib::Button>(i), true);
-    if (inputManager.wasReleased(physical[i])) emulator.set_button(static_cast<tamaink::tamalib::Button>(i), false);
+    if (inputManager.wasPressed(physical[i])) {
+      const auto status = emulator.set_button(static_cast<tamaink::tamalib::Button>(i), true);
+      Serial.printf("EMU INPUT: %c pressed%s\n", labels[i],
+                    status == tamaink::tamalib::Status::Ok ? "" : " (adapter error)");
+    }
+    if (inputManager.wasReleased(physical[i])) {
+      const auto status = emulator.set_button(static_cast<tamaink::tamalib::Button>(i), false);
+      Serial.printf("EMU INPUT: %c released%s\n", labels[i],
+                    status == tamaink::tamalib::Status::Ok ? "" : " (adapter error)");
+    }
   }
 }
 bool startEmulator() {
@@ -94,6 +106,7 @@ bool startEmulator() {
   emulatorActive = true;
   Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; display refresh bypassed");
   printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
+  emulatorFramePending = false; emulatorLastPrintAt = millis();
   return true;
 }
 bool persistenceReady = false;
@@ -701,9 +714,15 @@ void loop() {
     emulator.step(64, &emulatorSnapshot);
     if (!emulatorPrintedValid || std::memcmp(emulatorSnapshot.lcd, emulatorPrinted.lcd, sizeof emulatorSnapshot.lcd) != 0 ||
         emulatorSnapshot.icons != emulatorPrinted.icons) {
+      emulatorFramePending = true;
+    }
+    const unsigned long now = millis();
+    if (emulatorFramePending && now - emulatorLastPrintAt >= EMULATOR_SERIAL_FRAME_INTERVAL_MS) {
       printEmulatorSnapshot(emulatorSnapshot);
       emulatorPrinted = emulatorSnapshot;
       emulatorPrintedValid = true;
+      emulatorFramePending = false;
+      emulatorLastPrintAt = now;
     }
     delay(0);
     return;
