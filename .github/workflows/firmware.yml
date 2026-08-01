@@ -1,5 +1,5 @@
 name: Firmware
-run-name: Firmware — ${{ github.event.pull_request.head.ref || github.ref_name }}
+run-name: ${{ inputs.run_name || github.event.pull_request.title || github.event.head_commit.message }}
 
 on:
   pull_request:
@@ -7,6 +7,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      run_name:
+        description: Conventional Commit title shown in the Actions run list
+        required: true
+        type: string
 
 permissions:
   contents: read
