@@ -1,6 +1,7 @@
 #include "tamaink_emulator_state.h"
 
 #include <cstring>
+#include <initializer_list>
 
 namespace tamaink::emulator {
 namespace {
