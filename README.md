@@ -27,6 +27,7 @@ proven independently before later work is allowed to depend on it.
 | Physical buttons | Validated on a UC8253 X3 |
 | microSD, RTC, and battery | microSD read-only validated on a UC8253 X3; RTC and battery gate in progress (not hardware validated) |
 | Tamagotchi P1 emulation | Not started |
+| ROM validation (read-only packed P1 loading) | In progress; not full host emulation |
 | Persistent storage diagnostic | In progress (two-generation recovery gate) |
 
 The complete requirements, safety contract, and delivery gates are documented
@@ -77,6 +78,8 @@ tracked in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 ## ROM policy
 
 TamaInk does not include, distribute, download, or generate Tamagotchi ROMs.
+Optional local real-ROM integration testing is deferred; host CI uses synthetic
+buffers only and never requires or exposes a ROM file.
 
 When ROM support is implemented, users will supply their own compatible P1
 `rom.bin` on the microSD card. TamaInk will treat that file as read-only and
