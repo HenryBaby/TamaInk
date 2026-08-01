@@ -50,6 +50,9 @@ jobs:
       - name: Run TamaLib E0C6S46 host smoke test
         run: bash test/host/tamalib_smoke.sh
 
+      - name: Run TamaLib adapter deterministic host test
+        run: bash test/host/tamalib_adapter_determinism.sh
+
       - name: Set reproducible build timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
