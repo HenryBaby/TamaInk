@@ -53,6 +53,9 @@ jobs:
       - name: Run TamaLib adapter deterministic host test
         run: bash test/host/tamalib_adapter_determinism.sh
 
+      - name: Run portable emulator state codec host tests
+        run: bash test/host/run_emulator_state_tests.sh
+
       - name: Set reproducible build timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
