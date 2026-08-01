@@ -25,9 +25,9 @@ proven independently before later work is allowed to depend on it.
 | X3 and display-controller detection | Validated on a UC8253 X3 |
 | E-ink refresh modes | UC8253 full validated; UC8253 half/fast and UC8279d differential validation in progress |
 | Physical buttons | Validated on a UC8253 X3 |
-| microSD, RTC, and battery | microSD read-only validation in progress; RTC and battery not started |
+| microSD, RTC, and battery | microSD read-only validated on a UC8253 X3; RTC and battery not started |
 | Tamagotchi P1 emulation | Not started |
-| Save data and power management | Not started |
+| Persistent storage diagnostic | In progress (two-generation recovery gate) |
 
 The complete requirements, safety contract, and delivery gates are documented
 in [SCOPE.md](SCOPE.md).

@@ -7,6 +7,7 @@
 #include <XteinkDetect.h>
 #include <esp_system.h>
 #include <cstring>
+#include "tamaink_persistence.h"
 
 #ifndef TAMAINK_VERSION
 #define TAMAINK_VERSION "unknown"
@@ -20,6 +21,21 @@ constexpr unsigned long HOLD_REPORT_INTERVAL_MS = 1000;
 
 InputManager inputManager;
 bool inputReady = false;
+bool persistenceReady = false;
+enum class PersistenceState : uint8_t { Idle, Open, Partial, Complete, Synced, Verified, AwaitReset };
+PersistenceState persistenceState = PersistenceState::Idle;
+bool persistenceHasSelected = false;
+uint8_t persistenceSlot = 0;
+uint32_t persistenceGeneration = 0;
+uint8_t persistencePendingSlot = 0;
+uint32_t persistencePendingGeneration = 0;
+uint8_t persistenceRecord[ tamaink::persist::kHeaderSize + tamaink::persist::kMaxPayload ]{};
+uint8_t persistenceExpected[ tamaink::persist::kHeaderSize + tamaink::persist::kMaxPayload ]{};
+size_t persistenceRecordSize = 0;
+FsFile persistenceFile;
+constexpr char kPersistDir[] = "/.tamaink-test";
+constexpr char kPersistPaths[2][] = {"/.tamaink-test/persist-a.bin", "/.tamaink-test/persist-b.bin"};
+const uint8_t kPersistRom[8] = {'T','A','M','A','X','3','0','1'};
 uint8_t lastInputState = 0;
 unsigned long pressStartedAt[BUTTON_COUNT] = {};
 unsigned long lastHoldReportAt[BUTTON_COUNT] = {};
@@ -327,6 +343,94 @@ void runStorageDiagnostic() {
   Serial.println("SD diagnostic: sentinel pass");
 }
 
+bool readPersistenceSlot(uint8_t slot, tamaink::persist::Record& out) {
+  FsFile f = SdMan.open(kPersistPaths[slot], O_RDONLY);
+  if (!f) return false;
+  const uint64_t size = f.size();
+  if (size < tamaink::persist::kHeaderSize || size > sizeof persistenceRecord) { f.close(); return false; }
+  size_t total = 0;
+  while (total < static_cast<size_t>(size)) { const int n = f.read(persistenceRecord + total, static_cast<size_t>(size) - total); if (n <= 0) { f.close(); return false; } total += static_cast<size_t>(n); }
+  f.close();
+  return tamaink::persist::decode(persistenceRecord, static_cast<size_t>(size), kPersistRom, out) == tamaink::persist::DecodeError::None;
+}
+
+bool payloadMatches(const tamaink::persist::Record& r) {
+  if (r.payloadLength != 8) return false;
+  for (uint8_t i = 0; i < 8; ++i) if (r.payload[i] != static_cast<uint8_t>(r.generation + i)) return false;
+  return true;
+}
+
+bool verifyStagedSlot(uint8_t slot) {
+  FsFile f = SdMan.open(kPersistPaths[slot], O_RDONLY); if (!f) return false;
+  const uint64_t size = f.size(); if (size != persistenceRecordSize) { f.close(); return false; }
+  size_t total = 0; while (total < static_cast<size_t>(size)) { const int n = f.read(persistenceRecord + total, static_cast<size_t>(size) - total); if (n <= 0) { f.close(); return false; } total += static_cast<size_t>(n); } f.close();
+  if (!tamaink::persist::verifyStagedRecord(persistenceRecord, static_cast<size_t>(size),
+                                             persistenceExpected, persistenceRecordSize)) return false;
+  uint8_t candidate[sizeof persistenceRecord]; std::memcpy(candidate, persistenceRecord, size);
+  if (!tamaink::persist::commitStagedRecord(candidate, static_cast<size_t>(size),
+                                             persistenceExpected, persistenceRecordSize)) return false;
+  tamaink::persist::Record check{};
+  return tamaink::persist::decode(candidate, static_cast<size_t>(size), kPersistRom, check) == tamaink::persist::DecodeError::None && payloadMatches(check);
+}
+
+void scanPersistence() {
+  if (!SdMan.ready()) { persistenceReady = false; Serial.println("Persistence: SD unavailable; commands refused"); return; }
+  persistenceReady = true; tamaink::persist::Record rec[2]{}; bool valid[2]{};
+  for (uint8_t i = 0; i < 2; ++i) { valid[i] = readPersistenceSlot(i, rec[i]) && payloadMatches(rec[i]); Serial.printf("Persistence slot %c: %s\n", 'A' + i, valid[i] ? "valid" : "invalid/missing"); }
+  const int newest = tamaink::persist::selectNewest(&rec[0], valid[0], &rec[1], valid[1]);
+  persistenceHasSelected = newest >= 0;
+  if (newest < 0) { persistenceSlot = 0; persistenceGeneration = 0; }
+  if (newest >= 0) { persistenceSlot = static_cast<uint8_t>(newest); persistenceGeneration = rec[newest].generation; Serial.printf("Persistence selected slot %c generation=%lu\n", 'A' + newest, static_cast<unsigned long>(persistenceGeneration)); }
+}
+
+void failPersistenceWrite(const char* why) { if (persistenceFile) persistenceFile.close(); persistenceState = PersistenceState::Idle; Serial.printf("Persistence transaction failed: %s; rescanning\n", why); scanPersistence(); }
+
+void persistenceCommand(char c) {
+  if (c != 'p' && c != 'n' && c != 'c' && c != 'x') return;
+  if (!persistenceReady) { Serial.println("Persistence command refused: SD unavailable"); return; }
+  if (persistenceState == PersistenceState::AwaitReset) { Serial.println("Persistence command refused: await physical reset"); return; }
+  if (c == 'p') {
+    if (persistenceState != PersistenceState::Idle) return;
+    if (!SdMan.ensureDirectoryExists(kPersistDir)) { Serial.println("Persistence p refused: directory create failed"); return; }
+    const uint8_t target = persistenceHasSelected ? static_cast<uint8_t>(1 - persistenceSlot) : 0;
+    const uint32_t next = persistenceHasSelected ? persistenceGeneration + 1u : 0u;
+    tamaink::persist::Record r{}; std::memcpy(r.rom, kPersistRom, 8); r.generation = next; r.timestamp = millis(); r.payloadLength = 8;
+    for (uint8_t i = 0; i < 8; ++i) r.payload[i] = static_cast<uint8_t>(next + i);
+    persistenceRecordSize = tamaink::persist::encode(r, persistenceRecord, sizeof persistenceRecord);
+    if (persistenceRecordSize == 0) { Serial.println("Persistence p refused: encode failed"); return; }
+    std::memcpy(persistenceExpected, persistenceRecord, persistenceRecordSize);
+    if (!tamaink::persist::stageEncodedRecord(persistenceRecord, persistenceRecordSize)) { Serial.println("Persistence p refused: staging failed"); return; }
+    persistencePendingSlot = target; persistencePendingGeneration = next;
+    persistenceFile = SdMan.open(kPersistPaths[target], O_RDWR | O_CREAT | O_TRUNC);
+    if (!persistenceFile) { failPersistenceWrite("open"); return; }
+    persistenceState = PersistenceState::Open;
+    Serial.printf("Persistence p: target slot %c generation=%lu; reset now or send n for Partial\n", 'A' + target, static_cast<unsigned long>(next)); return;
+  }
+  if (c == 'n') {
+    if (persistenceState == PersistenceState::Idle) return;
+    const size_t partial = tamaink::persist::kHeaderSize / 2;
+    if (persistenceState == PersistenceState::Open) { if (persistenceFile.write(persistenceRecord, partial) != partial) { failPersistenceWrite("partial write"); return; } persistenceState = PersistenceState::Partial; Serial.println("Persistence Partial complete; reset now or send n"); }
+    else if (persistenceState == PersistenceState::Partial) { const size_t rem = persistenceRecordSize - partial; if (persistenceFile.write(persistenceRecord + partial, rem) != rem) { failPersistenceWrite("remainder write"); return; } persistenceState = PersistenceState::Complete; Serial.println("Persistence CompleteUnsynced; reset now or send n"); }
+    else if (persistenceState == PersistenceState::Complete) { if (!persistenceFile.sync()) { failPersistenceWrite("sync"); return; } persistenceState = PersistenceState::Synced; Serial.println("Persistence Synced; reset now or send n"); }
+    else if (persistenceState == PersistenceState::Synced) { persistenceFile.close(); if (!verifyStagedSlot(persistencePendingSlot)) { failPersistenceWrite("staged validation"); return; } persistenceState = PersistenceState::Verified; Serial.println("Persistence Verified staged; reset now or send n to commit"); }
+    else if (persistenceState == PersistenceState::Verified) { persistenceFile = SdMan.open(kPersistPaths[persistencePendingSlot], O_RDWR); if (!persistenceFile || !persistenceFile.seek(tamaink::persist::kCrcOffset) || persistenceFile.write(persistenceExpected + tamaink::persist::kCrcOffset, tamaink::persist::kCrcSize) != tamaink::persist::kCrcSize || !persistenceFile.sync()) { failPersistenceWrite("commit"); return; } persistenceFile.close(); persistenceSlot = persistencePendingSlot; persistenceGeneration = persistencePendingGeneration; persistenceHasSelected = true; persistenceState = PersistenceState::Idle; Serial.println("Persistence commit complete"); }
+    return;
+  }
+  if (persistenceState != PersistenceState::Idle) return;
+  if (c == 'c') {
+    tamaink::persist::Record newest{}, older{}; if (!persistenceHasSelected || !readPersistenceSlot(persistenceSlot, newest) || !payloadMatches(newest) || !readPersistenceSlot(static_cast<uint8_t>(1 - persistenceSlot), older) || !payloadMatches(older) || !tamaink::persist::generationNewer(newest.generation, older.generation)) { Serial.println("Persistence c refused: need newest plus older valid slots"); return; }
+    FsFile f = SdMan.open(kPersistPaths[persistenceSlot], O_RDWR);
+    uint8_t b = 0;
+    const bool ioOk = f && f.seek(tamaink::persist::kHeaderSize) && f.read(&b, 1) == 1 &&
+                      f.seek(tamaink::persist::kHeaderSize);
+    if (!ioOk) { if (f) f.close(); Serial.println("Persistence c failed"); return; }
+    b ^= 0x01u;
+    if (f.write(&b, 1) != 1 || !f.sync()) { f.close(); Serial.println("Persistence c failed"); return; }
+    f.close(); persistenceState = PersistenceState::AwaitReset; Serial.println("Persistence newest corrupted; await physical reset"); return;
+  }
+  if (c == 'x') { const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]); const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]); if (!a || !b) { Serial.println("Persistence cleanup failed"); scanPersistence(); return; } if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir); persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0; Serial.println("Persistence owned files cleaned"); }
+}
+
 }  // namespace
 
 void setup() {
@@ -388,6 +492,8 @@ void setup() {
     display.deepSleep();
     Serial.println("Display test phase 3/3 complete; panel sleeping.");
     runStorageDiagnostic();
+    scanPersistence();
+    Serial.println("Persistence diagnostic is write-capable (owned paths only): p=start, n=next phase, c=corrupt newest, x=cleanup");
     beginInputDiagnostic();
   } else {
     Serial.println("Board detection stopped; display pins untouched.");
@@ -396,5 +502,6 @@ void setup() {
 
 void loop() {
   if (inputReady) updateInputDiagnostic();
+  while (Serial.available()) persistenceCommand(static_cast<char>(Serial.read()));
   delay(10);
 }
