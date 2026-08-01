@@ -25,7 +25,19 @@ if staging_root.exists():
 stage.mkdir(parents=True)
 for name in ("cpu.c", "cpu.h", "hw.c", "hw.h", "tamalib.c", "tamalib.h", "hal.h"):
     shutil.copyfile(source / name, stage / name)
-shutil.copyfile(source / "hal_types.h.template", staging_root / "hal_types.h")
+hal_types_source = source / "hal_types.h.template"
+hal_types = hal_types_source.read_text(encoding="utf-8")
+for declaration in ("typedef unsigned int u32_t;", "typedef unsigned int timestamp_t;"):
+    if hal_types.count(declaration) != 1:
+        raise RuntimeError(f"unexpected TamaLib type declaration: {declaration}")
+hal_types = hal_types.replace(
+    "#define _HAL_TYPES_H_\n", "#define _HAL_TYPES_H_\n\n#include <stdint.h>\n", 1
+)
+hal_types = hal_types.replace("typedef unsigned int u32_t;", "typedef uint32_t u32_t;")
+hal_types = hal_types.replace(
+    "typedef unsigned int timestamp_t;", "typedef uint32_t timestamp_t;"
+)
+(staging_root / "hal_types.h").write_text(hal_types, encoding="utf-8")
 
 markers = ("previous_cycles", "tamalib_export_extended_state", "tamalib_import_extended_state")
 combined = "".join((stage / name).read_text(encoding="utf-8") for name in ("cpu.c", "cpu.h", "tamalib.c", "tamalib.h"))
