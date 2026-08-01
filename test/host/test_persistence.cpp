@@ -120,7 +120,7 @@ int main() {
     p[27] = 0xff;
   });
   expectError(size - 1, DecodeError::Truncated, [](std::uint8_t*) {});
-  expectError(size + 1, DecodeError::Trailing, [](std::uint8_t* p) { p[size] = 0; });
+  expectError(size + 1, DecodeError::Trailing, [size](std::uint8_t* p) { p[size] = 0; });
   expectError(size, DecodeError::BadCrc, [](std::uint8_t* p) { p[kHeaderSize] ^= 1; });
 
   assert(generationNewer(1, 0));
