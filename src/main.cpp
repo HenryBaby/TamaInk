@@ -5,6 +5,8 @@
 #include <SDCardManager.h>
 #include <SPI.h>
 #include <XteinkDetect.h>
+#include <BatteryMonitor.h>
+#include <Wire.h>
 #include <esp_system.h>
 #include <cstring>
 #include "tamaink_persistence.h"
@@ -245,6 +247,114 @@ bool initializeX3SharedSpi() {
   return true;
 }
 
+bool readX3RtcRegister(uint8_t reg, uint8_t& value) {
+  const auto& sensor = BoardConfig::ACTIVE.sensors;
+  if (sensor.rtcAddr == 0 || sensor.i2cSda < 0 || sensor.i2cScl < 0 || sensor.i2cHz == 0) return false;
+  Wire.begin(sensor.i2cSda, sensor.i2cScl, sensor.i2cHz);
+  Wire.setTimeOut(6);
+  Wire.beginTransmission(sensor.rtcAddr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(sensor.rtcAddr, static_cast<uint8_t>(1), static_cast<uint8_t>(true)) < 1) return false;
+  value = Wire.read();
+  return true;
+}
+
+bool readX3RtcTime(uint8_t raw[7]) {
+  const auto& sensor = BoardConfig::ACTIVE.sensors;
+  if (sensor.rtcAddr == 0 || sensor.i2cSda < 0 || sensor.i2cScl < 0 || sensor.i2cHz == 0) return false;
+  Wire.begin(sensor.i2cSda, sensor.i2cScl, sensor.i2cHz);
+  Wire.setTimeOut(6);
+  Wire.beginTransmission(sensor.rtcAddr);
+  Wire.write(static_cast<uint8_t>(0x00));
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(sensor.rtcAddr, static_cast<uint8_t>(7), static_cast<uint8_t>(true)) < 7) return false;
+  for (uint8_t i = 0; i < 7; ++i) raw[i] = Wire.read();
+  return true;
+}
+
+uint8_t x3Bcd(uint8_t value) { return static_cast<uint8_t>((value >> 4) * 10U + (value & 0x0FU)); }
+
+bool validBcd(uint8_t value) { return (value & 0x0FU) <= 9U && ((value >> 4) & 0x0FU) <= 9U; }
+
+uint8_t daysInMonth(uint16_t year, uint8_t month) {
+  constexpr uint8_t days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (month < 1 || month > 12) return 0;
+  if (month != 2) return days[month - 1];
+  const bool leap = (year % 4U == 0U && year % 100U != 0U) || year % 400U == 0U;
+  return leap ? 29 : 28;
+}
+
+void runX3RtcBatteryDiagnostic() {
+  Serial.println("RTC diagnostic: read-only DS3231 check");
+  if (!BoardConfig::hasRtc()) {
+    Serial.println("RTC: unavailable");
+  } else {
+    uint8_t status = 0;
+    if (!readX3RtcRegister(0x0F, status)) {
+      Serial.println("RTC: unavailable/I2C failure");
+    } else if ((status & 0x80U) != 0) {
+      Serial.println("RTC: present but oscillator-stopped (OSF)");
+    } else {
+      uint8_t raw[7] = {};
+      if (!readX3RtcTime(raw)) {
+        Serial.println("RTC: unavailable/I2C failure");
+      } else {
+        const uint8_t secondRaw = raw[0] & 0x7FU;
+        const uint8_t minuteRaw = raw[1] & 0x7FU;
+        const bool twelveHour = (raw[2] & 0x40U) != 0;
+        const uint8_t hourRaw = raw[2] & (twelveHour ? 0x1FU : 0x3FU);
+        const uint8_t weekdayRaw = raw[3] & 0x07U;
+        const uint8_t dayRaw = raw[4] & 0x3FU;
+        const uint8_t monthRaw = raw[5] & 0x1FU;
+        const uint8_t yearRaw = raw[6];
+        const uint8_t second = x3Bcd(secondRaw);
+        const uint8_t minute = x3Bcd(minuteRaw);
+        uint8_t hour = x3Bcd(hourRaw);
+        if (twelveHour) {
+          if (hour == 12) hour = 0;
+          if ((raw[2] & 0x20U) != 0) hour = static_cast<uint8_t>(hour + 12);
+        }
+        const uint8_t weekday = x3Bcd(weekdayRaw);
+        const uint8_t day = x3Bcd(dayRaw);
+        const uint8_t month = x3Bcd(monthRaw);
+        const uint16_t century = (raw[5] & 0x80U) != 0 ? 2100U : 2000U;
+        const uint16_t year = static_cast<uint16_t>(century + x3Bcd(yearRaw));
+        const bool encodingValid = validBcd(secondRaw) && validBcd(minuteRaw) && validBcd(hourRaw) &&
+                                   validBcd(dayRaw) && validBcd(monthRaw) && validBcd(yearRaw) &&
+                                   (raw[0] & 0x80U) == 0 && (raw[1] & 0x80U) == 0 &&
+                                   (raw[2] & 0x80U) == 0 &&
+                                   (raw[3] & 0xF8U) == 0 && (raw[4] & 0xC0U) == 0 &&
+                                   (raw[5] & 0x60U) == 0;
+        const bool valuesValid = second <= 59 && minute <= 59 && hour <= 23 && weekday >= 1 && weekday <= 7 &&
+                                 month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month) &&
+                                 (!twelveHour || (x3Bcd(hourRaw) >= 1 && x3Bcd(hourRaw) <= 12));
+        if (!encodingValid || !valuesValid) {
+          Serial.println("RTC: present but time/date registers invalid");
+        } else {
+          Serial.printf("RTC: valid %04u-%02u-%02uT%02u:%02u:%02u weekday=%u\n", year, month, day, hour, minute,
+                        second, weekday);
+        }
+      }
+    }
+  }
+
+  Serial.println("Battery diagnostic: read-only BQ27220 check");
+  const BatteryMonitor::Status status = BatteryMonitor().readStatus();
+  if (!status.supported) {
+    Serial.println("Battery: unsupported/unavailable");
+    return;
+  }
+  const bool anyKnown = status.percentageKnown || status.millivoltsKnown || status.chargingKnown;
+  Serial.println(anyKnown ? "Battery: supported" : "Battery: unavailable");
+  if (status.percentageKnown) Serial.printf("Battery percentage: %u%%\n", status.percentage);
+  else Serial.println("Battery percentage: unknown");
+  if (status.millivoltsKnown) Serial.printf("Battery millivolts: %u\n", status.millivolts);
+  else Serial.println("Battery millivolts: unknown");
+  if (status.chargingKnown) Serial.printf("Battery charging: %s\n", status.charging ? "yes" : "no");
+  else Serial.println("Battery charging: unknown");
+}
+
 void beginInputDiagnostic() {
   inputManager.begin();
   inputManager.update();
@@ -451,6 +561,8 @@ void setup() {
                 detectionScore2);
 
   if (boardVerdict == freeink::XteinkVerdict::X3Confirmed) {
+    // XteinkDetect has completed and released its temporary I2C bus use here.
+    runX3RtcBatteryDiagnostic();
     freeink::applyXteinkDisplayController();
     Serial.printf("Display controller: %s\n", displayControllerName(BoardConfig::ACTIVE.displayController));
 

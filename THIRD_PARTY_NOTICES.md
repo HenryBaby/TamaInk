@@ -35,8 +35,11 @@ credits original e-paper driver authorship to CidVonHighwind. Its complete
 `LICENSE` and `NOTICE` files must remain with source and release notices. The
 firmware pins revision `92303ba5e4d4f762bb2f9126a3e31c303d66eb28`
 (2026-07-28) as the `freeink-sdk` Git submodule and currently links only its
-`BoardConfig`, `XteinkDetect`, `EInkDisplay`, `InputManager`, and
-`SDCardManager` libraries.
+`BoardConfig`, `XteinkDetect`, `EInkDisplay`, `InputManager`, `SDCardManager`,
+and `BatteryMonitor` libraries. The X3 RTC diagnostic uses the Arduino Wire API
+and the DS3231 register behavior documented by the pinned FreeInk implementation,
+but does not link FreeInk's `Rtc` library because its `begin()` routine mutates
+DS3231 control state.
 TamaInk does not modify those files.
 
 ### SdFat
