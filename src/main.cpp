@@ -34,7 +34,10 @@ uint8_t persistenceExpected[ tamaink::persist::kHeaderSize + tamaink::persist::k
 size_t persistenceRecordSize = 0;
 FsFile persistenceFile;
 constexpr char kPersistDir[] = "/.tamaink-test";
-constexpr char kPersistPaths[2][] = {"/.tamaink-test/persist-a.bin", "/.tamaink-test/persist-b.bin"};
+constexpr const char* kPersistPaths[] = {
+    "/.tamaink-test/persist-a.bin",
+    "/.tamaink-test/persist-b.bin",
+};
 const uint8_t kPersistRom[8] = {'T','A','M','A','X','3','0','1'};
 uint8_t lastInputState = 0;
 unsigned long pressStartedAt[BUTTON_COUNT] = {};
