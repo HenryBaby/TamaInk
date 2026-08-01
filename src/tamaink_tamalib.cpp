@@ -61,6 +61,8 @@ void fill_snapshot(Snapshot* out) {
     out->pc = *s->pc; out->tick_counter = *s->tick_counter;
     out->x = *s->x; out->y = *s->y; out->a = *s->a; out->b = *s->b;
     out->np = *s->np; out->sp = *s->sp; out->flags = *s->flags;
+    out->button_interrupt_factor =
+        s->interrupts[INT_K00_K03_SLOT].factor_flag_reg;
   }
   out->timestamp = g_timestamp;
   std::memcpy(out->lcd, g_lcd, sizeof(g_lcd));

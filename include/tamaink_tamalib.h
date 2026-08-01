@@ -19,6 +19,7 @@ struct Snapshot {
   std::uint32_t timestamp = 0;
   std::uint16_t x = 0, y = 0;
   std::uint8_t a = 0, b = 0, np = 0, sp = 0, flags = 0;
+  std::uint8_t button_interrupt_factor = 0;
   std::uint32_t lcd[16]{};
   std::uint8_t icons = 0;
   bool button_a = false, button_b = false, button_c = false;
