@@ -26,8 +26,8 @@ proven independently before later work is allowed to depend on it.
 | E-ink refresh modes | UC8253 full validated; UC8253 half/fast and UC8279d differential validation in progress |
 | Physical buttons | Validated on a UC8253 X3 |
 | microSD, RTC, and battery | microSD read-only validated on a UC8253 X3; RTC and battery gate in progress (not hardware validated) |
-| Tamagotchi P1 emulation | In progress; deterministic host adapter and portable state codec tests added |
-| ROM validation (read-only packed P1 loading) | In progress; not full host emulation |
+| Tamagotchi P1 emulation | Device serial-only path integrated (E0C6S46 sources patched in CI); hardware validation pending |
+| ROM validation (read-only packed P1 loading) | Device `/rom.bin` streaming validation integrated; hardware validation pending |
 | Persistent storage diagnostic | In progress (two-generation recovery gate) |
 
 The complete requirements, safety contract, and delivery gates are documented

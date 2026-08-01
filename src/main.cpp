@@ -9,7 +9,10 @@
 #include <Wire.h>
 #include <esp_system.h>
 #include <cstring>
+#include <new>
 #include "tamaink_persistence.h"
+#include "tamaink_rom.h"
+#include "tamaink_tamalib.h"
 
 #ifndef TAMAINK_VERSION
 #define TAMAINK_VERSION "unknown"
@@ -23,6 +26,76 @@ constexpr unsigned long HOLD_REPORT_INTERVAL_MS = 1000;
 
 InputManager inputManager;
 bool inputReady = false;
+bool emulatorActive = false;
+tamaink::tamalib::Adapter emulator;
+std::uint16_t* emulatorProgram = nullptr;
+tamaink::tamalib::Snapshot emulatorSnapshot{};
+tamaink::tamalib::Snapshot emulatorPrinted{};
+bool emulatorPrintedValid = false;
+
+struct RomFileSource { FsFile* file; };
+bool romSize(void* context, size_t* size) {
+  if (!context || !size) return false;
+  auto* source = static_cast<RomFileSource*>(context);
+  *size = static_cast<size_t>(source->file->size());
+  return true;
+}
+const char* romStatusName(tamaink::rom::Status status) {
+  switch (status) {
+    case tamaink::rom::Status::MissingSource: return "missing source";
+    case tamaink::rom::Status::SizeFailure: return "size read failure";
+    case tamaink::rom::Status::SizeMismatch: return "wrong size";
+    case tamaink::rom::Status::ReadError: return "read failure";
+    case tamaink::rom::Status::AllocationFailure: return "allocation failure";
+    case tamaink::rom::Status::InvalidEncoding: return "invalid encoding";
+    default: return "invalid ROM";
+  }
+}
+size_t romRead(void* context, size_t offset, uint8_t* destination, size_t capacity) {
+  if (!context || !destination) return 0;
+  auto* source = static_cast<RomFileSource*>(context);
+  if (!source->file->seek(offset)) return 0;
+  const int got = source->file->read(destination, capacity);
+  return got < 0 ? 0 : static_cast<size_t>(got);
+}
+void printEmulatorSnapshot(const tamaink::tamalib::Snapshot& s) {
+  Serial.println("EMU LCD:");
+  for (unsigned row = 0; row < 16; ++row) {
+    for (unsigned col = 0; col < 32; ++col) Serial.print((s.lcd[row] & (1u << col)) ? '#' : '.');
+    Serial.println();
+  }
+  Serial.printf("EMU ICONS: 0x%02X\n", s.icons);
+}
+void updateEmulatorInput() {
+  inputManager.update();
+  const uint8_t physical[3] = {InputManager::BTN_BACK, InputManager::BTN_CONFIRM, InputManager::BTN_POWER};
+  for (unsigned i = 0; i < 3; ++i) {
+    if (inputManager.wasPressed(physical[i])) emulator.set_button(static_cast<tamaink::tamalib::Button>(i), true);
+    if (inputManager.wasReleased(physical[i])) emulator.set_button(static_cast<tamaink::tamalib::Button>(i), false);
+  }
+}
+bool startEmulator() {
+  FsFile file = SdMan.open("/rom.bin", O_RDONLY);
+  if (!file) { Serial.println("Emulator: ROM missing (/rom.bin)"); return false; }
+  RomFileSource source{&file};
+  tamaink::rom::ReadOnlySource reader{&source, romSize, romRead};
+  struct Alloc { static uint16_t* alloc(void*, size_t n) { return new (std::nothrow) uint16_t[n]; }
+    static void free(void*, uint16_t* p) { delete[] p; } };
+  tamaink::rom::Allocator allocator{nullptr, Alloc::alloc, Alloc::free};
+  tamaink::rom::Validation validation{};
+  tamaink::rom::Status status = tamaink::rom::load(&reader, &allocator, &emulatorProgram, &validation);
+  file.close();
+  if (status != tamaink::rom::Status::Ok) { Serial.printf("Emulator: ROM validation failed: %s\n", romStatusName(status)); return false; }
+  if (validation.classification != tamaink::rom::Classification::SupportedP1) {
+    Serial.println("Emulator: ROM unsupported P1 variant"); delete[] emulatorProgram; emulatorProgram = nullptr; return false;
+  }
+  const auto init = emulator.init(emulatorProgram, tamaink::tamalib::kProgramWords, &emulatorSnapshot);
+  if (init != tamaink::tamalib::Status::Ok) { Serial.printf("Emulator: init failed (%u)\n", static_cast<unsigned>(init)); delete[] emulatorProgram; emulatorProgram = nullptr; return false; }
+  emulatorActive = true;
+  Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; display refresh bypassed");
+  printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
+  return true;
+}
 bool persistenceReady = false;
 enum class PersistenceState : uint8_t { Idle, Open, Partial, Complete, Synced, Verified, AwaitReset };
 PersistenceState persistenceState = PersistenceState::Idle;
@@ -418,7 +491,7 @@ void runStorageDiagnostic() {
   constexpr size_t sentinelLength = sizeof(sentinelContents) - 1;
   char contents[sentinelLength] = {};
   Serial.printf("SD diagnostic: read-only checks; sentinel=%s\n", sentinelPath);
-  if (!SdMan.begin()) {
+  if (!SdMan.ready() && !SdMan.begin()) {
     Serial.println("SD diagnostic: mount failed");
     return;
   }
@@ -566,6 +639,13 @@ void setup() {
     freeink::applyXteinkDisplayController();
     Serial.printf("Display controller: %s\n", displayControllerName(BoardConfig::ACTIVE.displayController));
 
+    if (!SdMan.begin()) {
+      Serial.println("Emulator: SD mount failed; continuing hardware diagnostics");
+    } else if (startEmulator()) {
+      beginInputDiagnostic();
+      return;
+    }
+
     const auto& pins = BoardConfig::ACTIVE.display;
     static EInkDisplay display(pins.sclk, pins.mosi, pins.cs, pins.dc, pins.rst, pins.busy);
     display.setDisplayX3();
@@ -616,6 +696,18 @@ void setup() {
 }
 
 void loop() {
+  if (emulatorActive) {
+    updateEmulatorInput();
+    emulator.step(64, &emulatorSnapshot);
+    if (!emulatorPrintedValid || std::memcmp(emulatorSnapshot.lcd, emulatorPrinted.lcd, sizeof emulatorSnapshot.lcd) != 0 ||
+        emulatorSnapshot.icons != emulatorPrinted.icons) {
+      printEmulatorSnapshot(emulatorSnapshot);
+      emulatorPrinted = emulatorSnapshot;
+      emulatorPrintedValid = true;
+    }
+    delay(0);
+    return;
+  }
   if (inputReady) updateInputDiagnostic();
   while (Serial.available()) persistenceCommand(static_cast<char>(Serial.read()));
   delay(10);

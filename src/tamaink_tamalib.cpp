@@ -1,8 +1,11 @@
 #include "tamaink_tamalib.h"
 
-#if defined(TAMAINK_HOST_TAMALIB)
+#if defined(TAMAINK_TAMALIB) || defined(TAMAINK_HOST_TAMALIB)
 #include <cstring>
 #include <type_traits>
+#if defined(TAMAINK_TAMALIB) && !defined(TAMAINK_HOST_TAMALIB)
+#include <Arduino.h>
+#endif
 
 extern "C" {
 #include "tamalib.h"
@@ -21,6 +24,10 @@ namespace {
 bool g_initialized_once = false;
 Adapter* g_active = nullptr;
 std::uint32_t g_timestamp = 0;
+#if defined(TAMAINK_TAMALIB) && !defined(TAMAINK_HOST_TAMALIB)
+std::uint32_t g_wall_anchor_us = 0;
+std::uint32_t g_wall_anchor_ticks = 0;
+#endif
 std::uint32_t g_lcd[16] = {};
 std::uint8_t g_icons = 0;
 bool g_buttons[3] = {};
@@ -32,8 +39,30 @@ void no_free(void*) {}
 void no_void() {}
 bool_t no_log_enabled(log_level_t) { return 0; }
 void no_log(log_level_t, char*, ...) {}
+#if defined(TAMAINK_TAMALIB) && !defined(TAMAINK_HOST_TAMALIB)
+void reanchor_wall_clock(std::uint32_t ticks) {
+  g_wall_anchor_us = micros();
+  g_wall_anchor_ticks = ticks;
+  g_timestamp = ticks;
+}
+timestamp_t get_timestamp() {
+  const std::uint32_t elapsed_us = micros() - g_wall_anchor_us;
+  const std::uint64_t delta = (static_cast<std::uint64_t>(elapsed_us) * 32768u) / 1000000u;
+  g_timestamp = g_wall_anchor_ticks + static_cast<std::uint32_t>(delta);
+  return g_timestamp;
+}
+void sleep_until(timestamp_t ts) {
+  while (static_cast<std::int32_t>(ts - get_timestamp()) > 0) {
+    const std::uint32_t remaining = ts - g_timestamp;
+    delayMicroseconds(remaining > 32u ? 1000u : 100u);
+    yield();
+  }
+  reanchor_wall_clock(ts);
+}
+#else
 void sleep_until(timestamp_t ts) { g_timestamp = ts; }
 timestamp_t get_timestamp() { return g_timestamp; }
+#endif
 void no_screen() {}
 void set_lcd_matrix(u8_t x, u8_t y, bool_t val) {
   if (x < 32 && y < 16) {
@@ -97,6 +126,9 @@ Status Adapter::init(const std::uint16_t* program, std::size_t count,
   g_initialized_once = true;
   g_active = this;
   g_timestamp = 0; std::memset(g_lcd, 0, sizeof(g_lcd)); g_icons = 0; std::memset(g_buttons, 0, sizeof(g_buttons));
+#if defined(TAMAINK_TAMALIB) && !defined(TAMAINK_HOST_TAMALIB)
+  reanchor_wall_clock(0);
+#endif
   tamalib_register_hal(&g_hal);
   if (tamalib_init(reinterpret_cast<const u12_t*>(program), nullptr, 32768u) != 0) {
     g_active = nullptr; tamalib_release(); return Status::InitFailure;
@@ -177,10 +209,13 @@ Status Adapter::import_state(const emulator::State& s) {
   ext.exec_mode=static_cast<exec_mode_t>(s.execution_mode); ext.step_depth=s.execution_step_depth; ext.screen_ts=s.screen_timestamp; ext.ts_freq=s.tamalib_timestamp_frequency; ext.framerate=s.framerate;
   if (!tamalib_import_extended_state(&ext)) return Status::InvalidInput;
   g_timestamp=s.virtual_timestamp; std::memcpy(g_lcd,s.lcd,sizeof g_lcd); g_icons=s.icons;
+#if defined(TAMAINK_TAMALIB) && !defined(TAMAINK_HOST_TAMALIB)
+  reanchor_wall_clock(g_timestamp);
+#endif
   g_sound_frequency = s.sound_frequency; g_sound_enabled = s.sound_enabled != 0;
   for(int i=0;i<3;++i) g_buttons[i]=(s.buttons & (1u<<i)) != 0;
   return Status::Ok;
 }
 
 }  // namespace tamaink::tamalib
-#endif  // TAMAINK_HOST_TAMALIB
+#endif  // TAMAINK_TAMALIB || TAMAINK_HOST_TAMALIB
