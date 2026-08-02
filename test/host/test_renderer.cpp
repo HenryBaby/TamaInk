@@ -1,6 +1,7 @@
 #include "tamaink_renderer.h"
 #include <cassert>
 #include <cstdint>
+#include <algorithm>
 #include <vector>
 
 using tamaink::render::Rotation;
@@ -127,5 +128,30 @@ int main() {
   assert(tamaink::render::snapshot(empty, icons.data(), icons.size(), x3Width, x3Height, x3Stride,
                                    268, 8, 16, Rotation::CounterClockwise90,
                                    static_cast<IconLayout>(99)) == Status::InvalidArgument);
+
+  // Portrait status bar is physically top-right and does not overwrite LCD.
+  std::vector<std::uint8_t> statusBar(x3Stride * x3Height, 0xFF);
+  assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
+                                   268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
+                                   tamaink::render::BatteryStatus{true, 50}) == Status::Ok);
+  assert(black(statusBar, x3Stride, 31, 527)); // divider at physical y=31
+  assert(black(statusBar, x3Stride, 31, 300)); // continuous through LCD native y
+  assert(black(statusBar, x3Stride, 8, 86));  // right-aligned battery top edge
+  assert(black(statusBar, x3Stride, 12, 84)); // 50% fill
+  assert(!black(statusBar, x3Stride, 20, 84));
+  std::fill(statusBar.begin(), statusBar.end(), 0xFF);
+  assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
+                                   268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
+                                   tamaink::render::BatteryStatus{}) == Status::Ok);
+  assert(black(statusBar, x3Stride, 10, 24)); // unknown marker is rendered as --
+  std::fill(statusBar.begin(), statusBar.end(), 0xFF);
+  assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
+                                   268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
+                                   tamaink::render::BatteryStatus{true, 100}) == Status::Ok);
+  assert(black(statusBar, x3Stride, 12, 84)); // 100% fills to the interior edge
+  assert(!black(statusBar, x3Stride, 100, 500)); // content stays in bounds
+  // Status graphics do not alter the pet LCD or bottom icon regions.
+  assert(!black(statusBar, x3Stride, 300, 100));
+  assert(!black(statusBar, x3Stride, 744, 16));
   return 0;
 }

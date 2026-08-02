@@ -97,6 +97,48 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
           }
       }
     }
+
+    // X3 portrait status bar: deliberately independent of the LCD footprint
+    // so the pet and original bottom-row icons remain untouched.
+    auto pixelPhysical = [&](std::int64_t x, std::int64_t y, bool black) {
+      pixel(y, static_cast<std::int64_t>(height) - 1 - x, black);
+    };
+    constexpr std::uint8_t digits[11][5] = {
+      {0x1E,0x11,0x11,0x11,0x1E},{0x04,0x0C,0x04,0x04,0x0E},{0x1E,0x01,0x1E,0x10,0x1F},
+      {0x1E,0x01,0x0E,0x01,0x1E},{0x12,0x12,0x1F,0x02,0x02},{0x1F,0x10,0x1E,0x01,0x1E},
+      {0x0E,0x10,0x1E,0x11,0x0E},{0x1F,0x01,0x02,0x04,0x04},{0x0E,0x11,0x0E,0x11,0x0E},
+      {0x0E,0x11,0x0F,0x01,0x0E},{0x00,0x04,0x00,0x04,0x00}
+    };
+    constexpr std::int64_t sy = 2, sx = 2;
+    const std::int64_t dividerY = 31;
+    for (std::int64_t x = 0; x < height; ++x) pixelPhysical(x, dividerY, true);
+    const std::int64_t iconW = 26, iconH = 14, iconX = 441, iconY = 8;
+    for (std::int64_t x = iconX; x < iconX + iconW; ++x) { pixelPhysical(x, iconY, true); pixelPhysical(x, iconY + iconH - 1, true); }
+    for (std::int64_t y = iconY; y < iconY + iconH; ++y) { pixelPhysical(iconX, y, true); pixelPhysical(iconX + iconW - 1, y, true); }
+    for (std::int64_t y = iconY + 4; y < iconY + 10; ++y) pixelPhysical(iconX + iconW, y, true);
+    if (battery.percentageKnown && battery.percentage <= 100) {
+      const std::int64_t fill = (iconW - 4) * battery.percentage / 100;
+      for (std::int64_t y = iconY + 3; y < iconY + iconH - 3; ++y)
+        for (std::int64_t x = iconX + 2; x < iconX + 2 + fill; ++x) pixelPhysical(x, y, true);
+    }
+    unsigned value = battery.percentageKnown && battery.percentage <= 100 ? battery.percentage : 0;
+    const unsigned tens = value / 10, ones = value % 10;
+    const std::int64_t textY = 8, percentX = 515;
+    auto glyph = [&](unsigned digit, std::int64_t x0) {
+      for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 5; ++gx)
+        if (digits[digit][gy] & (1u << (4u - gx)))
+          for (std::int64_t py = 0; py < sy; ++py) for (std::int64_t px = 0; px < sx; ++px)
+            pixelPhysical(x0 + gx * sx + px, textY + gy * sy + py, true);
+    };
+    std::int64_t textX = percentX - 24;
+    if (battery.percentageKnown && battery.percentage <= 100) {
+      if (value < 10) { textX = percentX - 12; glyph(ones, textX); }
+      else if (value < 100) { textX = percentX - 24; glyph(tens, textX); glyph(ones, textX + 12); }
+      else { textX = percentX - 36; glyph(1, textX); glyph(0, textX + 12); glyph(0, textX + 24); }
+    } else { textX = percentX - 24; glyph(10, textX); glyph(10, textX + 12); }
+    // Percent sign, kept pixel-small to fit the physical top-right corner.
+    pixelPhysical(percentX, textY + 1, true); pixelPhysical(percentX + 4, textY + 1, true);
+    pixelPhysical(percentX + 2, textY + 4, true); pixelPhysical(percentX, textY + 8, true); pixelPhysical(percentX + 4, textY + 8, true);
   }
   return Status::Ok;
 }

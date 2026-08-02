@@ -50,6 +50,8 @@ bool inputReady = false;
 bool emulatorActive = false;
 tamaink::battery::WarningPolicy batteryWarning;
 tamaink::battery::Schedule batteryTelemetrySchedule;
+volatile bool batteryPercentageKnown = false;
+volatile std::uint8_t batteryPercentage = 0;
 tamaink::low_battery::Coordinator lowBatterySleep;
 tamaink::low_battery::TransactionArbiter saveArbiter;
 tamaink::tamalib::Adapter emulator;
@@ -121,7 +123,8 @@ void rendererTask(void*) {
     const auto status = tamaink::render::snapshot(frame, rendererDisplay->getFrameBuffer(),
         rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
         rendererDisplay->getDisplayWidthBytes(), 268, 8, 16, tamaink::render::Rotation::CounterClockwise90,
-        tamaink::render::IconLayout::P1BottomRow);
+        tamaink::render::IconLayout::P1BottomRow,
+        tamaink::render::BatteryStatus{batteryPercentageKnown, batteryPercentage});
     if (status != tamaink::render::Status::Ok) {
       Serial.println("Display renderer: frame geometry rejected");
       if (first) { rendererFirstFrameConfirmed = false; if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone); }
@@ -664,6 +667,8 @@ void runX3RtcBatteryDiagnostic() {
 
   Serial.println("Battery diagnostic: read-only BQ27220 check");
   const BatteryMonitor::Status status = BatteryMonitor().readStatus();
+  batteryPercentageKnown = status.percentageKnown && status.percentage <= 100;
+  batteryPercentage = batteryPercentageKnown ? static_cast<std::uint8_t>(status.percentage) : 0;
   if (status.percentageKnown && status.percentage <= 100) batteryWarning.update(true, status.percentage);
   if (!status.supported) {
     Serial.println("Battery: unsupported/unavailable");
@@ -693,7 +698,13 @@ bool sampleBatteryTelemetry(const char* source) {
     return false;
   }
   const BatteryMonitor::Status status = BatteryMonitor().readStatus();
+  const bool oldBatteryKnown = batteryPercentageKnown;
+  const std::uint8_t oldBatteryPercentage = batteryPercentage;
   const auto result = batteryWarning.update(status.percentageKnown, status.percentage);
+  batteryPercentageKnown = status.percentageKnown && status.percentage <= 100;
+  batteryPercentage = batteryPercentageKnown ? static_cast<std::uint8_t>(status.percentage) : 0;
+  if (rendererEnabled && (oldBatteryKnown != batteryPercentageKnown || oldBatteryPercentage != batteryPercentage))
+    rendererDispatch.changed(false, millis());
   Serial.printf("Battery telemetry source=%s supported=%s percentage=%s", source,
                 status.supported ? "yes" : "no", status.percentageKnown && status.percentage <= 100 ? "known" : "unknown");
   if (status.percentageKnown && status.percentage <= 100) Serial.printf("(%u%%)", status.percentage);
