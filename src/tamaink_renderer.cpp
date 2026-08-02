@@ -48,7 +48,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     const std::int64_t markerSide = scale * 3ll;
     const std::int64_t markerStep = scale * 4ll;
     const std::int64_t markerY = static_cast<std::int64_t>(originY) + scale / 2ll;
-    const std::int64_t markerX = right + scale;
+    const std::int64_t markerX = static_cast<std::int64_t>(width) - markerSide;
     auto pixel = [&](std::int64_t x, std::int64_t y, bool black) {
       if (x < 0 || y < 0 || x >= width || y >= height) return;
       auto& byte = destination[static_cast<std::size_t>(y) * stride + static_cast<std::size_t>(x) / 8u];
@@ -57,13 +57,13 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     };
     // Small original monochrome glyphs, expressed as 5x5 bitmaps rather than
     // copied device artwork. Bit order follows TamaLib/P1 menu semantics:
-    // Feed, Light, Play, Medicine, Clean, Meter, Discipline, Attention.
+    // Food, Light, Game, Medicine, Toilet, Health, Discipline, Attention.
     // Under CCW rotation, original top/bottom row order appears bottom-to-top.
     static constexpr std::uint8_t glyphs[8][5] = {
-      {0x04, 0x0E, 0x15, 0x04, 0x04}, {0x04, 0x0E, 0x1F, 0x0E, 0x04},
-      {0x10, 0x18, 0x1C, 0x18, 0x10}, {0x04, 0x0E, 0x15, 0x04, 0x0E},
-      {0x11, 0x0A, 0x04, 0x0A, 0x11}, {0x0E, 0x11, 0x15, 0x11, 0x0E},
-      {0x1F, 0x11, 0x0A, 0x04, 0x04}, {0x04, 0x0E, 0x04, 0x00, 0x04}
+      {0x15, 0x1D, 0x09, 0x09, 0x09}, {0x15, 0x0E, 0x04, 0x0E, 0x0E},
+      {0x18, 0x19, 0x02, 0x04, 0x08}, {0x03, 0x06, 0x0C, 0x18, 0x10},
+      {0x11, 0x0E, 0x05, 0x0C, 0x1C}, {0x0E, 0x09, 0x09, 0x09, 0x0E},
+      {0x0C, 0x0A, 0x0D, 0x0A, 0x0C}, {0x15, 0x1F, 0x0E, 0x04, 0x04}
     };
     for (unsigned row = 0; row < 8; ++row) {
       const std::int64_t y0 = markerY + static_cast<std::int64_t>(7u - row) * markerStep;

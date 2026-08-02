@@ -56,7 +56,7 @@ int main() {
   assert(tamaink::render::snapshot(s, clipped.data(), clipped.size(), 16, 32, 2, 0, 0, 1,
                                    static_cast<Rotation>(99)) == Status::InvalidArgument);
 
-  // P1 bottom-row layout: all 48x48 extents are at x=540; bit0 top=464,
+  // P1 bottom-row layout: all 48x48 extents are at x=744; bit0 top=464,
   // bit7 top=16 (64px pitch), preserving perceived left-to-right order.
   constexpr unsigned x3Width = 792, x3Height = 528, x3Stride = 99;
   std::vector<std::uint8_t> icons(x3Stride * x3Height, 0xA5);
@@ -65,9 +65,11 @@ int main() {
                                    268, 8, 16, Rotation::CounterClockwise90,
                                    IconLayout::P1BottomRow) == Status::Ok);
   for (unsigned bit = 0; bit < 8; ++bit) {
-    const unsigned x0 = 540, y0 = 16 + (7 - bit) * 64;
+    const unsigned x0 = 744, y0 = 16 + (7 - bit) * 64;
     assert(!black(icons, x3Stride, x0, y0));
     assert(!black(icons, x3Stride, x0 + 47, y0 + 47));
+    assert(!black(icons, x3Stride, x0 - 1, y0 + 24));
+    assert(!black(icons, x3Stride, x0 + 47, y0 + 24));
     bool glyphVisible = false;
     for (unsigned y = y0 + 9; y < y0 + 39; ++y)
       for (unsigned x = x0 + 9; x < x0 + 39; ++x)
@@ -81,13 +83,13 @@ int main() {
     assert(tamaink::render::snapshot(oneIcon, marked.data(), marked.size(), x3Width, x3Height, x3Stride,
                                      268, 8, 16, Rotation::CounterClockwise90,
                                      IconLayout::P1BottomRow) == Status::Ok);
-    const unsigned x0 = 540, y0 = 16 + (7 - bit) * 64;
+    const unsigned x0 = 744, y0 = 16 + (7 - bit) * 64;
     // Active state retains its centered glyph and adds open corner brackets.
     static constexpr std::uint8_t glyphs[8][5] = {
-      {0x04, 0x0E, 0x15, 0x04, 0x04}, {0x04, 0x0E, 0x1F, 0x0E, 0x04},
-      {0x10, 0x18, 0x1C, 0x18, 0x10}, {0x04, 0x0E, 0x15, 0x04, 0x0E},
-      {0x11, 0x0A, 0x04, 0x0A, 0x11}, {0x0E, 0x11, 0x15, 0x11, 0x0E},
-      {0x1F, 0x11, 0x0A, 0x04, 0x04}, {0x04, 0x0E, 0x04, 0x00, 0x04}
+      {0x15, 0x1D, 0x09, 0x09, 0x09}, {0x15, 0x0E, 0x04, 0x0E, 0x0E},
+      {0x18, 0x19, 0x02, 0x04, 0x08}, {0x03, 0x06, 0x0C, 0x18, 0x10},
+      {0x11, 0x0E, 0x05, 0x0C, 0x1C}, {0x0E, 0x09, 0x09, 0x09, 0x0E},
+      {0x0C, 0x0A, 0x0D, 0x0A, 0x0C}, {0x15, 0x1F, 0x0E, 0x04, 0x04}
     };
     for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 5; ++gx)
       for (unsigned py = 0; py < 6; ++py) for (unsigned px = 0; px < 6; ++px)
@@ -96,6 +98,8 @@ int main() {
     assert(black(marked, x3Stride, x0 + 3, y0 + 3));
     assert(black(marked, x3Stride, x0 + 8, y0 + 3));
     assert(!black(marked, x3Stride, x0 + 24, y0 + 3));
+    assert(!black(marked, x3Stride, x0 - 1, y0 + 24));
+    assert(!black(marked, x3Stride, x0 + 47, y0 + 24));
     // LCD footprint remains white when icons are the only source bits.
     for (unsigned y = 8; y < 520; ++y)
       for (unsigned x = 268; x < 524; ++x) assert(!black(marked, x3Stride, x, y));

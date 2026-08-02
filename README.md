@@ -43,17 +43,18 @@ X3, it maps the 32x16 LCD counterclockwise into a centered portrait footprint:
 when the device buttons are at the bottom. In y-down coordinates, logical
 (column,row) maps to physical (row,31-column); the renderer also retains an
 explicit unrotated mode for host tests. The current P1 icon layout draws
-project-owned monochrome glyphs within 48x48 extents in the physical
-single physical row below the LCD (x=540 on the 792px X3 panel; tops at
+project-owned monochrome glyphs within 48x48 extents in a single physical row
+along the bottom edge of the portrait display (framebuffer x=744 on the 792px
+X3 panel; tops at
 y=464,400,336,272,208,144,80,16 for bits 0 through 7). Inactive icons show
 only their glyph; active icons add four open corner brackets around the 48px
 extent. Hardware confirms the semantic order and rotated top/bottom mapping:
-Feed, Light, Play, Medicine, Clean, Meter, Discipline, Attention. The new
-single-row placement still requires its hardware validation gate.
+Food, Light, Game, Medicine, Toilet, Health, Discipline, Attention. The new
+bottom-edge placement still requires its hardware validation gate.
 UC8279d and other controllers
 keep the serial emulator active with rendering disabled. The renderer performs
 one initial full refresh, then UC8253 fast refreshes no more often than once per
-second; no periodic cleaning refresh is enabled in this increment.
+500 ms; no periodic cleaning refresh is enabled in this increment.
 
 The complete requirements, safety contract, and delivery gates are documented
 in [SCOPE.md](SCOPE.md).

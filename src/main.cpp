@@ -40,6 +40,7 @@ namespace {
 constexpr uint8_t BUTTON_COUNT = InputManager::BTN_POWER + 1;
 constexpr unsigned long INPUT_REPOLL_MS = 6;
 constexpr unsigned long HOLD_REPORT_INTERVAL_MS = 1000;
+constexpr unsigned long RENDERER_MIN_REFRESH_INTERVAL_MS = 500;
 constexpr unsigned long EMULATOR_SERIAL_FRAME_INTERVAL_MS = 250;
 
 InputManager inputManager;
@@ -110,7 +111,8 @@ void rendererTask(void*) {
       continue;
     }
     const unsigned long now = millis();
-    if (!first && now - lastRefresh < 1000) vTaskDelay(pdMS_TO_TICKS(1000 - (now - lastRefresh)));
+    if (!first && now - lastRefresh < RENDERER_MIN_REFRESH_INTERVAL_MS)
+      vTaskDelay(pdMS_TO_TICKS(RENDERER_MIN_REFRESH_INTERVAL_MS - (now - lastRefresh)));
     tamaink::tamalib::Snapshot newest{};
     while (xQueueReceive(rendererQueue, &newest, 0) == pdTRUE) frame = newest;
     const auto status = tamaink::render::snapshot(frame, rendererDisplay->getFrameBuffer(),
