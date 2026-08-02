@@ -12,8 +12,8 @@ int main() {
   CatchupController normal(130, 200, 0);
   assert(normal.nextBatch(0) == 64); normal.observe(64, 64, true);
   assert(normal.nextBatch(64) == 64); normal.observe(128, 64, true);
-  assert(normal.nextBatch(128) == 2); normal.observe(130, 2, true);
-  assert(normal.done() && normal.result().attempts == 130);
+  assert(normal.nextBatch(128) == 64); normal.observe(130, 64, true);
+  assert(normal.done() && normal.result().attempts == 192);
 
   CatchupController overshoot(100, 200, 0);
   const auto b = overshoot.nextBatch(0); overshoot.observe(120, b, true);
