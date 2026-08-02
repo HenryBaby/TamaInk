@@ -54,6 +54,8 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_rtc_sleep_gate.cpp test/host/test_rtc_sleep_gate.cpp -o /tmp/tamaink-rtc-sleep-tests && /tmp/tamaink-rtc-sleep-tests
       - name: Run wake catch-up plan host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_wake_catchup_plan.cpp test/host/test_wake_catchup_plan.cpp -o /tmp/tamaink-wake-catchup-plan-tests && /tmp/tamaink-wake-catchup-plan-tests
+      - name: Run bounded wake catch-up execution host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_wake_catchup.cpp test/host/test_wake_catchup.cpp -o /tmp/tamaink-wake-catchup-tests && /tmp/tamaink-wake-catchup-tests
 
       - name: Run ROM validation host sanitizer tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_rom.cpp test/host/test_rom.cpp -o /tmp/tamaink-rom-tests && /tmp/tamaink-rom-tests

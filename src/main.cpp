@@ -22,6 +22,7 @@
 #include "tamaink_sleep_screen.h"
 #include "tamaink_rtc_sleep_gate.h"
 #include "tamaink_wake_catchup_plan.h"
+#include "tamaink_wake_catchup.h"
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -277,11 +278,31 @@ bool startEmulator() {
               elapsedSeconds, persistenceBootState.virtual_timestamp,
               persistenceBootState.tamalib_timestamp_frequency);
           if (plan.available) {
-            Serial.printf("Wake catch-up plan: requested=%llu s planned=%lu s capped=%s targetTicks=%lu maxInstructions=%lu; emulator catch-up not applied\n",
+            tamaink::wake::CatchupController controller(plan.targetVirtualTimestamp,
+                                                        plan.maxInstructionAttempts,
+                                                        emulatorSnapshot.timestamp);
+            const unsigned long startedAt = millis();
+            while (!controller.done()) {
+              if (millis() - startedAt >= 10000UL) {
+                controller.stop(tamaink::wake::CatchupOutcome::Watchdog, emulatorSnapshot.timestamp);
+                break;
+              }
+              const std::size_t batch = controller.nextBatch(emulatorSnapshot.timestamp);
+              if (!batch) break;
+              tamaink::tamalib::Snapshot next{};
+              const auto status = emulator.step(batch, &next);
+              controller.observe(status == tamaink::tamalib::Status::Ok ? next.timestamp : emulatorSnapshot.timestamp,
+                                  batch, status == tamaink::tamalib::Status::Ok);
+              if (status == tamaink::tamalib::Status::Ok) emulatorSnapshot = next;
+            }
+            const auto result = controller.result();
+            Serial.printf("Wake catch-up: requested=%llu s planned=%lu s outcome=%s attempts=%lu finalTicks=%lu targetTicks=%lu capped=%s\n",
                           static_cast<unsigned long long>(plan.requestedSeconds),
-                          static_cast<unsigned long>(plan.plannedSeconds), plan.capped ? "yes" : "no",
-                          static_cast<unsigned long>(plan.targetVirtualTimestamp),
-                          static_cast<unsigned long>(plan.maxInstructionAttempts));
+                          static_cast<unsigned long>(plan.plannedSeconds),
+                          tamaink::wake::catchupOutcomeName(result.outcome),
+                          static_cast<unsigned long>(result.attempts),
+                          static_cast<unsigned long>(result.finalTimestamp),
+                          static_cast<unsigned long>(result.targetTimestamp), plan.capped ? "yes" : "no");
           } else {
             Serial.printf("Wake catch-up plan unavailable: requested=%llu s; emulator catch-up not applied\n",
                           static_cast<unsigned long long>(elapsedSeconds));
