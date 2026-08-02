@@ -53,11 +53,25 @@ credits original e-paper driver authorship to CidVonHighwind. Its complete
 firmware pins revision `92303ba5e4d4f762bb2f9126a3e31c303d66eb28`
 (2026-07-28) as the `freeink-sdk` Git submodule and currently links only its
 `BoardConfig`, `XteinkDetect`, `EInkDisplay`, `InputManager`, `SDCardManager`,
-and `BatteryMonitor` libraries. The X3 RTC diagnostic uses the Arduino Wire API
+`BatteryMonitor`, `PowerManager`, and `FreeInkUI` libraries. The X3 RTC diagnostic uses the Arduino Wire API
 and the DS3231 register behavior documented by the pinned FreeInk implementation,
 but does not link FreeInk's `Rtc` library because its `begin()` routine mutates
 DS3231 control state.
 TamaInk does not modify those files.
+
+#### Noto Sans bitmap font
+
+- Project: <https://github.com/notofonts/noto-fonts>
+- Copyright: 2018 The Noto Project Authors
+- License: SIL Open Font License 1.1
+- Source in the pinned dependency: `freeink-sdk/libs/ui/FreeInkUI/include/FreeInkUIFont.h`
+- Use: FreeInkUI's 1-bit rasterization of Noto Sans Regular at 24 px is rendered
+  directly for the TamaInk sleep-screen wordmark and status text
+
+The generated header identifies the source face, raster size, bitmap format,
+and OFL terms. TamaInk does not modify or rename the font data. The required
+copyright notice and complete license are distributed in
+`LICENSES/OFL-1.1.txt`.
 
 ### SdFat
 
