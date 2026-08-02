@@ -182,6 +182,9 @@ persistence are idle it performs the same durable save, then stops rendering,
 waits for release, and deep-sleeps armed only for the confirmed GPIO3 power
 button. ADC button ladders cannot identify individual wake buttons; DS3231
 alarm wake is unavailable/unknown, and no timer or automatic sleep is used.
+After the durable save is verified and the power button is released, the
+renderer shows a centered white TamaInk/SLEEPING terminal screen, performs a
+blocking full refresh, then turns off the panel and enters ESP deep sleep.
 Wake cause and GPIO status are logged at boot; the serial GPIO3 wake path has
 been hardware validated. USB reset or power cycle is the recovery path.
 

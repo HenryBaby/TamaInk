@@ -68,6 +68,8 @@ jobs:
 
       - name: Run LCD renderer host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer.cpp test/host/test_renderer.cpp -o /tmp/tamaink-renderer-tests && /tmp/tamaink-renderer-tests
+      - name: Run sleep screen host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_sleep_screen.cpp test/host/sleep_screen_test.cpp -o /tmp/tamaink-sleep-tests && /tmp/tamaink-sleep-tests
 
       - name: Set reproducible build timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
