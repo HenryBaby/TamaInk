@@ -182,6 +182,12 @@ partial/remainder/sync/verify/CRC-commit phases; `c` corrupts the newest slot
 for fallback testing; and `x` removes only the owned state files. Reset may be
 requested between phases. Hardware validation remains pending.
 
+While the emulator is active, battery telemetry is read-only and sampled at
+most once per minute. The `b` command requests an immediate sample and resets
+the timer. Warning state uses 15%/20% hysteresis (low at 15% or below, cleared
+at 20% or above); unknown samples retain the prior warning state. Hardware
+validation of this telemetry remains pending.
+
 Deep-sleep wake resumes now execute bounded emulator catch-up before normal
 renderer startup when RTC elapsed time is valid. Execution is capped at 300
 planned seconds, 2,000,000 instruction attempts, or a 10-second boot watchdog;
