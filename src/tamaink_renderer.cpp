@@ -110,7 +110,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     };
     constexpr std::int64_t digitScale = 6;
     // Top status region is 64 physical pixels high; no divider is drawn.
-    constexpr std::int64_t iconX = 344, iconY = 12, iconW = 72, iconH = 40;
+    constexpr std::int64_t iconX = 8, iconY = 17, iconW = 72, iconH = 30;
     constexpr std::int64_t border = 4;
     for (std::int64_t t = 0; t < border; ++t) {
       for (std::int64_t x = iconX; x < iconX + iconW; ++x) {
@@ -122,7 +122,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
         pixelPhysical(iconX + iconW - 1 - t, y, true);
       }
     }
-    for (std::int64_t y = iconY + 16; y < iconY + 24; ++y)
+    for (std::int64_t y = iconY + 11; y < iconY + 19; ++y)
       for (std::int64_t x = iconX + iconW; x < iconX + iconW + 8; ++x) pixelPhysical(x, y, true);
     const unsigned bars = !battery.percentageKnown || battery.percentage > 100 ? 0u :
       (battery.percentage == 0 ? 0u : (battery.percentage - 1u) / 20u + 1u);
@@ -133,7 +133,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     }
     const unsigned value = battery.percentageKnown && battery.percentage <= 100 ? battery.percentage : 0;
     const unsigned tens = value / 10, ones = value % 10;
-    const std::int64_t textY = 17, textStart = 432, digitPitch = 24;
+    const std::int64_t textY = 17, textStart = 96, digitPitch = 24;
     auto glyph = [&](unsigned digit, std::int64_t x0) {
       for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 3; ++gx)
         if (digits[digit][gy] & (1u << (2u - gx)))

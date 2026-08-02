@@ -137,18 +137,18 @@ int main() {
   assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
                                    268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
                                    tamaink::render::BatteryStatus{true, 97}) == Status::Ok);
-  assert(physicalBlack(344, 12) && physicalBlack(415, 51));
-  assert(physicalBlack(347, 15) && physicalBlack(412, 48)); // 4px border
-  assert(!physicalBlack(348, 16)); // empty cavity beyond the border
-  assert(physicalBlack(416, 28) && physicalBlack(423, 35));
-  assert(!physicalBlack(100, 31) && !physicalBlack(300, 31)); // no divider
-  for (unsigned bar = 0; bar < 5; ++bar) assert(physicalBlack(352 + bar * 12 + 2, 32));
-  assert(physicalBlack(432, 17) && physicalBlack(468, 17)); // 30px-tall 97 digits
+  assert(physicalBlack(8, 17) && physicalBlack(79, 46));
+  assert(physicalBlack(11, 20) && physicalBlack(76, 43)); // 4px border
+  assert(!physicalBlack(12, 21)); // empty cavity beyond the border
+  assert(physicalBlack(80, 28) && physicalBlack(87, 35));
+  assert(!physicalBlack(250, 31) && !physicalBlack(300, 31)); // no divider
+  for (unsigned bar = 0; bar < 5; ++bar) assert(physicalBlack(16 + bar * 12 + 2, 32));
+  assert(physicalBlack(96, 17) && physicalBlack(132, 17)); // 30px-tall 97 digits
   // 9 and 7 use 3x5 glyphs at scale 6; no third glyph follows 97.
-  assert(!physicalBlack(432, 35) && physicalBlack(444, 35));
-  assert(!physicalBlack(456, 23) && physicalBlack(468, 23));
-  assert(!physicalBlack(480, 17));
-  assert(!physicalBlack(520, 20)); // no trailing percent glyph
+  assert(!physicalBlack(96, 35) && physicalBlack(108, 35));
+  assert(!physicalBlack(120, 23) && physicalBlack(132, 23));
+  assert(!physicalBlack(144, 17));
+  assert(!physicalBlack(168, 20)); // no trailing percent glyph
   const unsigned boundaries[] = {0,1,20,21,40,41,60,61,80,81,100};
   for (unsigned v : boundaries) {
     std::fill(statusBar.begin(), statusBar.end(), 0xFF);
@@ -157,19 +157,19 @@ int main() {
       tamaink::render::BatteryStatus{true, static_cast<std::uint8_t>(v)}) == Status::Ok);
     const unsigned expected = v == 0 ? 0 : (v - 1) / 20 + 1;
     for (unsigned bar = 0; bar < 5; ++bar)
-      assert(physicalBlack(352 + bar * 12 + 2, 32) == (bar < expected));
+      assert(physicalBlack(16 + bar * 12 + 2, 32) == (bar < expected));
   }
   std::fill(statusBar.begin(), statusBar.end(), 0xFF);
   assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
     268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
     tamaink::render::BatteryStatus{true, 100}) == Status::Ok);
-  assert(physicalBlack(438, 17) && physicalBlack(456, 17) && physicalBlack(480, 17));
+  assert(physicalBlack(102, 17) && physicalBlack(120, 17) && physicalBlack(144, 17));
   std::fill(statusBar.begin(), statusBar.end(), 0xFF);
   assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
     268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
     tamaink::render::BatteryStatus{}) == Status::Ok);
-  for (unsigned bar = 0; bar < 5; ++bar) assert(!physicalBlack(352 + bar * 12 + 2, 32));
-  assert(physicalBlack(432, 29) && physicalBlack(456, 29)); // --
+  for (unsigned bar = 0; bar < 5; ++bar) assert(!physicalBlack(16 + bar * 12 + 2, 32));
+  assert(physicalBlack(96, 29) && physicalBlack(120, 29)); // --
   assert(!black(statusBar, x3Stride, 100, 500)); // bounds
   assert(!black(statusBar, x3Stride, 300, 100));
   assert(!black(statusBar, x3Stride, 744, 16));
