@@ -67,11 +67,17 @@ EInkDisplay* rendererDisplay = nullptr;
 QueueHandle_t rendererQueue = nullptr;
 TaskHandle_t rendererTaskHandle = nullptr;
 SemaphoreHandle_t rendererStopped = nullptr;
+SemaphoreHandle_t rendererFirstFrameDone = nullptr;
+volatile bool rendererFirstFrameConfirmed = false;
 bool rendererEnabled = false;
 bool rendererBegun = false;
 volatile bool rendererStopRequested = false;
 tamaink::wake::Coordinator wakeDiagnostic;
 tamaink::sleep_gesture::Controller sleepGesture;
+bool wakeCatchupPending = false;
+std::uint64_t wakeCatchupElapsedSeconds = 0;
+std::uint32_t wakeCatchupVirtualTimestamp = 0;
+std::uint32_t wakeCatchupTimestampFrequency = 0;
 void dispatchSerialCommand(char c);
 bool initializeX3SharedSpi();
 bool readRtcEpoch(std::uint64_t& epoch);
@@ -96,7 +102,13 @@ void rendererTask(void*) {
       if (rendererStopRequested) break;
       continue;
     }
-    while (rendererDisplay->refreshBusy()) vTaskDelay(pdMS_TO_TICKS(20));
+    const unsigned long busyStarted = millis();
+    while (rendererDisplay->refreshBusy() && millis() - busyStarted < 12000UL) vTaskDelay(pdMS_TO_TICKS(20));
+    if (rendererDisplay->refreshBusy()) {
+      Serial.println("Display renderer: BUSY timeout before frame");
+      if (first) { rendererFirstFrameConfirmed = false; if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone); }
+      continue;
+    }
     const unsigned long now = millis();
     if (!first && now - lastRefresh < 1000) vTaskDelay(pdMS_TO_TICKS(1000 - (now - lastRefresh)));
     tamaink::tamalib::Snapshot newest{};
@@ -105,11 +117,18 @@ void rendererTask(void*) {
         rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
         rendererDisplay->getDisplayWidthBytes(), 268, 8, 16, tamaink::render::Rotation::CounterClockwise90,
         tamaink::render::IconLayout::P1BottomRow);
-    if (status != tamaink::render::Status::Ok) { Serial.println("Display renderer: frame geometry rejected"); continue; }
+    if (status != tamaink::render::Status::Ok) {
+      Serial.println("Display renderer: frame geometry rejected");
+      if (first) { rendererFirstFrameConfirmed = false; if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone); }
+      continue;
+    }
     rendererDisplay->displayBuffer(first ? EInkDisplay::FULL_REFRESH : EInkDisplay::FAST_REFRESH, false);
     if (first) {
-      while (rendererDisplay->refreshBusy()) vTaskDelay(pdMS_TO_TICKS(20));
-      rendererDisplay->skipInitialResync();
+      const unsigned long refreshStarted = millis();
+      while (rendererDisplay->refreshBusy() && millis() - refreshStarted < 12000UL) vTaskDelay(pdMS_TO_TICKS(20));
+      rendererFirstFrameConfirmed = !rendererDisplay->refreshBusy();
+      if (rendererFirstFrameConfirmed) rendererDisplay->skipInitialResync();
+      if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone);
     }
     lastRefresh = millis(); first = false;
     if (rendererStopRequested) break;
@@ -128,6 +147,8 @@ void stopRenderer() {
     }
   }
   if (rendererStopped) { vSemaphoreDelete(rendererStopped); rendererStopped = nullptr; }
+  if (rendererFirstFrameDone) { vSemaphoreDelete(rendererFirstFrameDone); rendererFirstFrameDone = nullptr; }
+  rendererFirstFrameConfirmed = false;
   if (rendererQueue) { vQueueDelete(rendererQueue); rendererQueue = nullptr; }
   if (rendererDisplay) { rendererDisplay->releaseBuffers(); if (rendererBegun) rendererDisplay->deepSleep(); delete rendererDisplay; rendererDisplay = nullptr; }
   rendererBegun = false;
@@ -152,6 +173,9 @@ bool startRenderer() {
   if (!rendererQueue) { Serial.println("Display renderer: queue allocation failed"); stopRenderer(); return false; }
   rendererStopped = xSemaphoreCreateBinary();
   if (!rendererStopped) { Serial.println("Display renderer: completion semaphore allocation failed"); stopRenderer(); return false; }
+  rendererFirstFrameDone = xSemaphoreCreateBinary();
+  if (!rendererFirstFrameDone) { Serial.println("Display renderer: first-frame semaphore allocation failed"); stopRenderer(); return false; }
+  rendererFirstFrameConfirmed = false;
   if (xTaskCreate(rendererTask, "tama-render", 4096, nullptr, 1, &rendererTaskHandle) != pdPASS) {
     Serial.println("Display renderer: task allocation failed"); stopRenderer(); return false;
   }
@@ -236,6 +260,8 @@ void renderSleepScreenAndRelease() {
   rendererDisplay->deepSleep();
   delete rendererDisplay; rendererDisplay = nullptr; rendererBegun = false; rendererEnabled = false;
   if (rendererStopped) { vSemaphoreDelete(rendererStopped); rendererStopped = nullptr; }
+  if (rendererFirstFrameDone) { vSemaphoreDelete(rendererFirstFrameDone); rendererFirstFrameDone = nullptr; }
+  rendererFirstFrameConfirmed = false;
   if (rendererQueue) { vQueueDelete(rendererQueue); rendererQueue = nullptr; }
 }
 bool startEmulator() {
@@ -284,38 +310,12 @@ bool startEmulator() {
               elapsedSeconds, persistenceBootState.virtual_timestamp,
               persistenceBootState.tamalib_timestamp_frequency);
           if (plan.available) {
-            tamaink::wake::CatchupController controller(plan.targetVirtualTimestamp,
-                                                        plan.maxInstructionAttempts,
-                                                        emulatorSnapshot.timestamp);
-            const unsigned long startedAt = millis();
-            const auto fastForwardStatus = emulator.set_fast_forward(true);
-            if (fastForwardStatus != tamaink::tamalib::Status::Ok) {
-              controller.stop(tamaink::wake::CatchupOutcome::AdapterError, emulatorSnapshot.timestamp);
-            }
-            while (!controller.done()) {
-              if (millis() - startedAt >= 10000UL) {
-                controller.stop(tamaink::wake::CatchupOutcome::Watchdog, emulatorSnapshot.timestamp);
-                break;
-              }
-              const std::size_t batch = controller.nextBatch(emulatorSnapshot.timestamp);
-              if (!batch) break;
-              tamaink::tamalib::Snapshot next{};
-              const auto status = emulator.step(batch, &next);
-              controller.observe(status == tamaink::tamalib::Status::Ok ? next.timestamp : emulatorSnapshot.timestamp,
-                                  batch, status == tamaink::tamalib::Status::Ok);
-              if (status == tamaink::tamalib::Status::Ok) emulatorSnapshot = next;
-            }
-            const auto restoreStatus = emulator.set_fast_forward(false);
-            if (restoreStatus != tamaink::tamalib::Status::Ok)
-              Serial.printf("Wake catch-up: failed to restore normal clock mode (%u)\n", static_cast<unsigned>(restoreStatus));
-            const auto result = controller.result();
-            Serial.printf("Wake catch-up: requested=%llu s planned=%lu s outcome=%s attempts=%lu finalTicks=%lu targetTicks=%lu capped=%s\n",
-                          static_cast<unsigned long long>(plan.requestedSeconds),
-                          static_cast<unsigned long>(plan.plannedSeconds),
-                          tamaink::wake::catchupOutcomeName(result.outcome),
-                          static_cast<unsigned long>(result.attempts),
-                          static_cast<unsigned long>(result.finalTimestamp),
-                          static_cast<unsigned long>(result.targetTimestamp), plan.capped ? "yes" : "no");
+            // Defer catch-up until the imported snapshot has completed its first
+            // e-ink refresh. This preserves the exact persisted frame on wake.
+            wakeCatchupPending = true;
+            wakeCatchupElapsedSeconds = elapsedSeconds;
+            wakeCatchupVirtualTimestamp = persistenceBootState.virtual_timestamp;
+            wakeCatchupTimestampFrequency = persistenceBootState.tamalib_timestamp_frequency;
           } else {
             Serial.printf("Wake catch-up plan unavailable: requested=%llu s; emulator catch-up not applied\n",
                           static_cast<unsigned long long>(elapsedSeconds));
@@ -336,6 +336,39 @@ bool startEmulator() {
   emulatorObserved = emulatorSnapshot; emulatorObservedValid = true;
   serialFramePending = false; rendererFramePending = false; emulatorLastPrintAt = millis();
   return true;
+}
+
+void runDeferredWakeCatchup() {
+  if (!wakeCatchupPending) return;
+  wakeCatchupPending = false;
+  const auto plan = tamaink::wake::makeCatchupPlan(
+      wakeCatchupElapsedSeconds, wakeCatchupVirtualTimestamp, wakeCatchupTimestampFrequency);
+  if (!plan.available) return;
+  tamaink::wake::CatchupController controller(plan.targetVirtualTimestamp,
+                                              plan.maxInstructionAttempts, emulatorSnapshot.timestamp);
+  const unsigned long startedAt = millis();
+  const auto fastForwardStatus = emulator.set_fast_forward(true);
+  if (fastForwardStatus != tamaink::tamalib::Status::Ok)
+    controller.stop(tamaink::wake::CatchupOutcome::AdapterError, emulatorSnapshot.timestamp);
+  while (!controller.done()) {
+    if (millis() - startedAt >= 10000UL) { controller.stop(tamaink::wake::CatchupOutcome::Watchdog, emulatorSnapshot.timestamp); break; }
+    const std::size_t batch = controller.nextBatch(emulatorSnapshot.timestamp);
+    if (!batch) break;
+    tamaink::tamalib::Snapshot next{};
+    const auto status = emulator.step(batch, &next);
+    controller.observe(status == tamaink::tamalib::Status::Ok ? next.timestamp : emulatorSnapshot.timestamp,
+                       batch, status == tamaink::tamalib::Status::Ok);
+    if (status == tamaink::tamalib::Status::Ok) emulatorSnapshot = next;
+  }
+  const auto restoreStatus = emulator.set_fast_forward(false);
+  if (restoreStatus != tamaink::tamalib::Status::Ok)
+    Serial.printf("Wake catch-up: failed to restore normal clock mode (%u)\n", static_cast<unsigned>(restoreStatus));
+  const auto result = controller.result();
+  Serial.printf("Wake catch-up: requested=%llu s planned=%lu s outcome=%s attempts=%lu finalTicks=%lu targetTicks=%lu capped=%s\n",
+                static_cast<unsigned long long>(plan.requestedSeconds), static_cast<unsigned long>(plan.plannedSeconds),
+                tamaink::wake::catchupOutcomeName(result.outcome), static_cast<unsigned long>(result.attempts),
+                static_cast<unsigned long>(result.finalTimestamp), static_cast<unsigned long>(result.targetTimestamp),
+                plan.capped ? "yes" : "no");
 }
 bool persistenceReady = false;
 enum class PersistenceState : uint8_t { Idle, Open, Partial, Complete, Synced, Verified, AwaitReset };
@@ -1095,7 +1128,18 @@ void setup() {
       Serial.println("Emulator: SD mount failed; continuing hardware diagnostics");
     } else if (startEmulator()) {
       beginInputDiagnostic();
-      if (startRenderer()) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
+      const bool hadDeferredWakeCatchup = wakeCatchupPending;
+      const bool rendererStarted = startRenderer();
+      if (rendererStarted) {
+        xQueueOverwrite(rendererQueue, &emulatorSnapshot);
+        if (hadDeferredWakeCatchup && rendererFirstFrameDone &&
+            xSemaphoreTake(rendererFirstFrameDone, pdMS_TO_TICKS(13000)) != pdTRUE)
+          Serial.println("Display renderer: first-frame completion timed out; continuing wake catch-up");
+        if (hadDeferredWakeCatchup && !rendererFirstFrameConfirmed)
+          Serial.println("Display renderer: imported first frame was not confirmed; continuing wake catch-up");
+      }
+      if (hadDeferredWakeCatchup) runDeferredWakeCatchup();
+      if (hadDeferredWakeCatchup && rendererStarted && rendererEnabled) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
       return;
     }
 
