@@ -30,9 +30,12 @@ proven independently before later work is allowed to depend on it.
 | ROM validation (read-only packed P1 loading) | Device `/rom.bin` streaming validation integrated; hardware validation pending |
 | Persistent storage diagnostic | In progress (two-generation recovery gate) |
 
-Deep sleep currently freezes the emulator. The RTC sleep gate computes and logs a
-bounded, plan-only catch-up target after a valid resume; emulator catch-up is not
-applied. Plan-only hardware validation is pending.
+Deep-sleep resume now applies bounded emulator catch-up after a valid RTC
+resume, before normal startup. Execution is limited to 300 planned seconds,
+2,000,000 instruction attempts, or a 10-second boot watchdog; hardware
+validation remains pending. A temporary fast-forward clock is used only during
+this catch-up, then normal wall-clock pacing is restored; hardware retest is
+pending.
 
 The first rendering increment is build-integrated but hardware-pending. On the
 X3, it maps the 32x16 LCD counterclockwise into a centered portrait footprint:
@@ -178,6 +181,12 @@ slot; repeated `n` advances
 partial/remainder/sync/verify/CRC-commit phases; `c` corrupts the newest slot
 for fallback testing; and `x` removes only the owned state files. Reset may be
 requested between phases. Hardware validation remains pending.
+
+Deep-sleep wake resumes now execute bounded emulator catch-up before normal
+renderer startup when RTC elapsed time is valid. Execution is capped at 300
+planned seconds, 2,000,000 instruction attempts, or a 10-second boot watchdog;
+the final snapshot is retained on every stop outcome. This is host-tested and
+hardware validation remains pending.
 
 ## Contributing
 

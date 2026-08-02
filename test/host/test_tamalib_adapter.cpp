@@ -12,6 +12,7 @@ int main() {
   using namespace tamaink::tamalib;
   std::vector<std::uint16_t> program(kProgramWords, 0x0FFBu);
   Adapter adapter;
+  assert(adapter.set_fast_forward(true) == Status::NotInitialized);
   Snapshot s{};
   assert(adapter.init(nullptr, kProgramWords, &s) == Status::InvalidInput);
   assert(adapter.step(1, &s) == Status::NotInitialized);
@@ -72,6 +73,13 @@ int main() {
   assert(adapter.snapshot(&s) == Status::Ok);
   assert((s.lcd[0] & 1u) != 0 && (s.icons & 1u) != 0);
   assert((s.lcd[1] & 1u) == 0);
+  const auto importedTimestamp = s.timestamp;
+  assert(adapter.set_fast_forward(true) == Status::Ok);
+  assert(adapter.snapshot(&s) == Status::Ok && s.timestamp == importedTimestamp);
+  assert(adapter.step(64, &s) == Status::Ok && s.timestamp != importedTimestamp);
+  const auto fastTimestamp = s.timestamp;
+  assert(adapter.set_fast_forward(false) == Status::Ok);
+  assert(adapter.snapshot(&s) == Status::Ok && s.timestamp == fastTimestamp);
   std::printf("pc=%04X tick=%u ts=%u event=%u icons=%u lcd0=%08X\n", s.pc,
               s.tick_counter, s.timestamp, s.button_interrupt_factor, s.icons,
               s.lcd[0]);
