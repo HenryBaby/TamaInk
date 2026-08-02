@@ -56,8 +56,8 @@ int main() {
   assert(tamaink::render::snapshot(s, clipped.data(), clipped.size(), 16, 32, 2, 0, 0, 1,
                                    static_cast<Rotation>(99)) == Status::InvalidArgument);
 
-  // P1 icon layout: X3 geometry places 16x16 markers at x=236/540,
-  // y=144+32*bit. Inactive markers are outlines; active markers are filled.
+  // P1 icon layout: X3 geometry places centered 16x16 markers at x=236/540,
+  // y=184+32*row. Inactive markers are outlines; active markers show glyphs.
   constexpr unsigned x3Width = 792, x3Height = 528, x3Stride = 99;
   std::vector<std::uint8_t> icons(x3Stride * x3Height, 0xA5);
   tamaink::tamalib::Snapshot empty{};
@@ -65,7 +65,7 @@ int main() {
                                    268, 8, 16, Rotation::CounterClockwise90,
                                    IconLayout::P1Margins) == Status::Ok);
   for (unsigned side = 0; side < 2; ++side) for (unsigned bit = 0; bit < 4; ++bit) {
-    const unsigned x0 = side == 0 ? 236 : 540, y0 = 144 + bit * 32;
+    const unsigned x0 = side == 0 ? 236 : 540, y0 = 184 + bit * 32;
     assert(black(icons, x3Stride, x0, y0));
     assert(black(icons, x3Stride, x0 + 15, y0 + 15));
     assert(!black(icons, x3Stride, x0 + 7, y0 + 7));
@@ -78,7 +78,7 @@ int main() {
                                      268, 8, 16, Rotation::CounterClockwise90,
                                      IconLayout::P1Margins) == Status::Ok);
     const unsigned side = bit < 4 ? 0 : 1, row = 3u - (bit % 4u);
-    const unsigned x0 = side == 0 ? 236 : 540, y0 = 144 + row * 32;
+    const unsigned x0 = side == 0 ? 236 : 540, y0 = 184 + row * 32;
     // Active state contains its centered 5x5 project-owned glyph (2x2 pixels/cell)
     // with a clear 3px margin from the marker outline.
     static constexpr std::uint8_t glyphs[8][5] = {

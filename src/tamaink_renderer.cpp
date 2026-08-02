@@ -47,7 +47,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
   if (iconLayout == IconLayout::P1Margins) {
     const std::int64_t markerSide = scale;
     const std::int64_t markerStep = scale * 2ll;
-    const std::int64_t markerTotal = markerSide * 8ll + markerStep * 7ll;
+    const std::int64_t markerTotal = markerSide * 4ll + markerStep * 3ll;
     const std::int64_t markerY = static_cast<std::int64_t>(originY) +
         (footprintHeight - markerTotal) / 2ll;
     const std::int64_t markerX[2] = {
