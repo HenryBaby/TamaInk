@@ -67,26 +67,36 @@ int main() {
          Status::Ok);
 
   // A golden framebuffer catches changes to wording, casing, weight, layout,
-  // logo, and native orientation in one deterministic assertion.
-  assert(fnv1a(frame) == 0x27B0653CE7620064ull);
+  // sleeping face, and native orientation in one deterministic assertion.
+  assert(fnv1a(frame) == 0x75B5ED34464AA554ull);
   for (int nativeY : {0, kNativeHeight - 1}) {
     for (int nativeX : {0, kNativeWidth - 1}) assert(!nativeBlack(frame, nativeX, nativeY));
   }
 
-  const InkBounds logo = bounds(frame, 180, 120, 348, 235);
-  const InkBounds title = bounds(frame, 100, 250, 428, 325);
-  const InkBounds sleeping = bounds(frame, 100, 340, 428, 395);
-  assert(logo.left == 232 && logo.right == 296 && logo.top == 138 && logo.bottom == 222);
-  assert(title.left == 141 && title.right == 387 && title.top == 270 && title.bottom == 311);
-  assert(sleeping.left == 186 && sleeping.right == 340 && sleeping.top == 360 && sleeping.bottom == 380);
+  const InkBounds face = bounds(frame, 180, 220, 350, 360);
+  const InkBounds title = bounds(frame, 100, 450, 430, 525);
+  const InkBounds sleeping = bounds(frame, 120, 525, 408, 565);
+  assert(face.left == 224 && face.right == 319 && face.top == 238 && face.bottom == 339);
+  assert(title.left == 155 && title.right == 373 && title.top == 475 && title.bottom == 511);
+  assert(sleeping.left == 182 && sleeping.right == 345 && sleeping.top == 537 && sleeping.bottom == 553);
   assert(title.left + title.right == 528);
-  assert(sleeping.left + sleeping.right == 526);
+  assert(sleeping.left + sleeping.right == 527);
   assert(title.pixels > sleeping.pixels * 2);  // Bold title versus lighter status.
+  assert(logicalBlack(frame, 302, 238));  // Upper Z.
+  assert(logicalBlack(frame, 224, 330));  // Left closed eye.
+  const int compositionTop = face.top;
+  const int compositionBottom = sleeping.bottom;
+  const int compositionLeft = title.left;
+  const int compositionRight = title.right;
+  // The odd-width mark uses the logical x=264 center pixel on an even canvas.
+  assert(compositionLeft + compositionRight == 528);
+  // On an even-sized logical canvas, this is the exact half-pixel center.
+  assert(compositionTop + compositionBottom == 791);
 
   // This exact raw/native landmark proves the portrait image used the confirmed
   // CCW transform, rather than being written in landscape or mirrored.
-  assert(logicalBlack(frame, 141, 270));
-  assert(nativeBlack(frame, 270, 386));
+  assert(logicalBlack(frame, 155, 477));
+  assert(nativeBlack(frame, 477, 372));
 
   assert(tamaink::sleep_screen::render(nullptr, kBytes, kNativeWidth, kNativeHeight, kStride) ==
          Status::InvalidArgument);
