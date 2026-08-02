@@ -58,7 +58,8 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     // Small original monochrome glyphs, expressed as 5x5 bitmaps rather than
     // copied device artwork. Bit order follows TamaLib/P1 menu semantics:
     // Food, Light, Game, Medicine, Toilet, Health, Discipline, Attention.
-    // Under CCW rotation, original top/bottom row order appears bottom-to-top.
+    // Glyphs use the same CCW convention as the LCD: source (gx,gy) maps to
+    // destination (gy,4-gx) in y-down coordinates.
     static constexpr std::uint8_t glyphs[8][5] = {
       {0x15, 0x1D, 0x09, 0x09, 0x09}, {0x15, 0x0E, 0x04, 0x0E, 0x0E},
       {0x18, 0x19, 0x02, 0x04, 0x08}, {0x03, 0x06, 0x0C, 0x18, 0x10},
@@ -80,7 +81,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
           if ((glyphs[iconBit][gy] & (1u << (4u - gx))) != 0)
             for (std::int64_t py = 0; py < cell; ++py)
               for (std::int64_t px = 0; px < cell; ++px)
-                pixel(glyphOriginX + gx * cell + px, glyphOriginY + gy * cell + py, true);
+                pixel(glyphOriginX + gy * cell + px, glyphOriginY + (4u - gx) * cell + py, true);
       if (active) {
         constexpr std::int64_t inset = 3, length = 6;
         for (std::int64_t i = 0; i < length; ++i) {

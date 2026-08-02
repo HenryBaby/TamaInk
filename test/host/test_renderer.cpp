@@ -93,7 +93,7 @@ int main() {
     };
     for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 5; ++gx)
       for (unsigned py = 0; py < 6; ++py) for (unsigned px = 0; px < 6; ++px)
-        assert(black(marked, x3Stride, x0 + 9 + gx * 6 + px, y0 + 9 + gy * 6 + py) ==
+        assert(black(marked, x3Stride, x0 + 9 + gy * 6 + px, y0 + 9 + (4u - gx) * 6 + py) ==
                ((glyphs[bit][gy] & (1u << (4u - gx))) != 0));
     assert(black(marked, x3Stride, x0 + 3, y0 + 3));
     assert(black(marked, x3Stride, x0 + 8, y0 + 3));
