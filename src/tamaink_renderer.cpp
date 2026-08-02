@@ -114,7 +114,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     const std::int64_t dividerY = 31;
     for (std::int64_t x = 0; x < height; ++x) pixelPhysical(x, dividerY, true);
     // Compact 5x5 battery glyph on the same square-pixel grid as the text.
-    constexpr std::int64_t iconX = 441, iconY = 7, cell = 3, iconW = 15, iconH = 15;
+    constexpr std::int64_t iconX = 441, iconY = 7, cell = 3, iconH = 15;
     static constexpr std::uint8_t batteryGlyph[5] = {0x1E, 0x12, 0x13, 0x12, 0x1E};
     for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 5; ++gx)
       if (batteryGlyph[gy] & (1u << (4u - gx)))
