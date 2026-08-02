@@ -20,6 +20,7 @@
 #include "tamaink_wake_diagnostic.h"
 #include "tamaink_sleep_gesture.h"
 #include "tamaink_sleep_screen.h"
+#include "tamaink_rtc_sleep_gate.h"
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -65,6 +66,7 @@ tamaink::wake::Coordinator wakeDiagnostic;
 tamaink::sleep_gesture::Controller sleepGesture;
 void dispatchSerialCommand(char c);
 bool initializeX3SharedSpi();
+bool readRtcEpoch(std::uint64_t& epoch);
 void scanPersistence();
 bool readPersistenceSlot(uint8_t slot, tamaink::persist::Record& out);
 bool payloadMatches(const tamaink::persist::Record& r);
@@ -264,6 +266,15 @@ bool startEmulator() {
       }
       persistenceSlot = slot; persistenceGeneration = persistenceBootRecord[slot].generation; resumed = true;
       Serial.printf("Persistence: resumed generation=%lu from slot %c\n", static_cast<unsigned long>(persistenceGeneration), 'A' + slot);
+      if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+        std::uint64_t saved = 0, nowRtc = 0;
+        const bool sv = tamaink::rtc::decodeTagged(persistenceBootRecord[slot].timestamp, saved);
+        const bool cv = readRtcEpoch(nowRtc);
+        std::uint64_t elapsedSeconds = 0;
+        if (sv && cv && tamaink::rtc::elapsed(saved, nowRtc, elapsedSeconds)) Serial.printf("Wake diagnostic: RTC elapsed %llu seconds; emulator catch-up not applied\n", static_cast<unsigned long long>(elapsedSeconds));
+        else if (sv && cv) Serial.println("Wake diagnostic: RTC moved backward; elapsed unavailable; emulator catch-up not applied");
+        else Serial.println("Wake diagnostic: RTC saved/current timestamp unavailable or invalid; emulator catch-up not applied");
+      }
     }
   }
   if (!resumed) Serial.println("Persistence: no importable state; starting fresh");
@@ -530,17 +541,7 @@ bool readX3RtcTime(uint8_t raw[7]) {
   return true;
 }
 
-uint8_t x3Bcd(uint8_t value) { return static_cast<uint8_t>((value >> 4) * 10U + (value & 0x0FU)); }
-
-bool validBcd(uint8_t value) { return (value & 0x0FU) <= 9U && ((value >> 4) & 0x0FU) <= 9U; }
-
-uint8_t daysInMonth(uint16_t year, uint8_t month) {
-  constexpr uint8_t days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  if (month < 1 || month > 12) return 0;
-  if (month != 2) return days[month - 1];
-  const bool leap = (year % 4U == 0U && year % 100U != 0U) || year % 400U == 0U;
-  return leap ? 29 : 28;
-}
+bool readRtcEpoch(std::uint64_t& epoch) { uint8_t raw[7]{}; tamaink::rtc::DateTime dt{}; return readX3RtcTime(raw) && tamaink::rtc::decodeDs3231(raw, dt, epoch); }
 
 void runX3RtcBatteryDiagnostic() {
   Serial.println("RTC diagnostic: read-only DS3231 check");
@@ -557,40 +558,11 @@ void runX3RtcBatteryDiagnostic() {
       if (!readX3RtcTime(raw)) {
         Serial.println("RTC: unavailable/I2C failure");
       } else {
-        const uint8_t secondRaw = raw[0] & 0x7FU;
-        const uint8_t minuteRaw = raw[1] & 0x7FU;
-        const bool twelveHour = (raw[2] & 0x40U) != 0;
-        const uint8_t hourRaw = raw[2] & (twelveHour ? 0x1FU : 0x3FU);
-        const uint8_t weekdayRaw = raw[3] & 0x07U;
-        const uint8_t dayRaw = raw[4] & 0x3FU;
-        const uint8_t monthRaw = raw[5] & 0x1FU;
-        const uint8_t yearRaw = raw[6];
-        const uint8_t second = x3Bcd(secondRaw);
-        const uint8_t minute = x3Bcd(minuteRaw);
-        uint8_t hour = x3Bcd(hourRaw);
-        if (twelveHour) {
-          if (hour == 12) hour = 0;
-          if ((raw[2] & 0x20U) != 0) hour = static_cast<uint8_t>(hour + 12);
-        }
-        const uint8_t weekday = x3Bcd(weekdayRaw);
-        const uint8_t day = x3Bcd(dayRaw);
-        const uint8_t month = x3Bcd(monthRaw);
-        const uint16_t century = (raw[5] & 0x80U) != 0 ? 2100U : 2000U;
-        const uint16_t year = static_cast<uint16_t>(century + x3Bcd(yearRaw));
-        const bool encodingValid = validBcd(secondRaw) && validBcd(minuteRaw) && validBcd(hourRaw) &&
-                                   validBcd(dayRaw) && validBcd(monthRaw) && validBcd(yearRaw) &&
-                                   (raw[0] & 0x80U) == 0 && (raw[1] & 0x80U) == 0 &&
-                                   (raw[2] & 0x80U) == 0 &&
-                                   (raw[3] & 0xF8U) == 0 && (raw[4] & 0xC0U) == 0 &&
-                                   (raw[5] & 0x60U) == 0;
-        const bool valuesValid = second <= 59 && minute <= 59 && hour <= 23 && weekday >= 1 && weekday <= 7 &&
-                                 month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month) &&
-                                 (!twelveHour || (x3Bcd(hourRaw) >= 1 && x3Bcd(hourRaw) <= 12));
-        if (!encodingValid || !valuesValid) {
+        tamaink::rtc::DateTime dt{}; std::uint64_t epoch = 0;
+        if (!tamaink::rtc::decodeDs3231(raw, dt, epoch)) {
           Serial.println("RTC: present but time/date registers invalid");
         } else {
-          Serial.printf("RTC: valid %04u-%02u-%02uT%02u:%02u:%02u weekday=%u\n", year, month, day, hour, minute,
-                        second, weekday);
+          Serial.printf("RTC: valid %04u-%02u-%02uT%02u:%02u:%02u weekday=%u\n", dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, dt.weekday);
         }
       }
     }
@@ -845,7 +817,7 @@ void persistenceCommand(char c, bool internal = false) {
     if (!SdMan.ensureDirectoryExists(kPersistDir)) { cancelWakeDiagnosticSave(); Serial.println("Persistence p refused: directory create failed"); return; }
     const uint8_t target = persistenceHasSelected ? static_cast<uint8_t>(1 - persistenceSlot) : 0;
     const uint32_t next = persistenceHasSelected ? persistenceGeneration + 1u : 0u;
-    tamaink::persist::Record& r = persistenceBootRecord[0]; r = {}; std::memcpy(r.rom, kPersistRom, 8); r.generation = next; r.timestamp = millis();
+    tamaink::persist::Record& r = persistenceBootRecord[0]; r = {}; std::memcpy(r.rom, kPersistRom, 8); r.generation = next; std::uint64_t rtcEpoch = 0; r.timestamp = readRtcEpoch(rtcEpoch) ? tamaink::rtc::encodeTagged(rtcEpoch) : 0; if (!r.timestamp) Serial.println("Persistence: RTC unavailable/invalid; saving untagged timestamp");
     if (emulator.export_state(&persistenceBootState) != tamaink::tamalib::Status::Ok) { cancelWakeDiagnosticSave(); Serial.println("Persistence p refused: live export failed"); return; }
     r.payloadLength = tamaink::emulator::encode(persistenceBootState, r.payload, sizeof r.payload, kPersistRom);
     if (r.payloadLength != tamaink::emulator::kEncodedSize) { cancelWakeDiagnosticSave(); Serial.println("Persistence p refused: state encode failed"); return; }

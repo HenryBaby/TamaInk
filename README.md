@@ -30,6 +30,8 @@ proven independently before later work is allowed to depend on it.
 | ROM validation (read-only packed P1 loading) | Device `/rom.bin` streaming validation integrated; hardware validation pending |
 | Persistent storage diagnostic | In progress (two-generation recovery gate) |
 
+Deep sleep currently freezes the emulator. The RTC sleep gate only measures and reports the RTC gap; it does not apply emulator catch-up. Hardware validation is pending.
+
 The first rendering increment is build-integrated but hardware-pending. On the
 X3, it maps the 32x16 LCD counterclockwise into a centered portrait footprint:
 16x scale, 256x512 pixels at origin (268,8), producing an upright 512x256 view
