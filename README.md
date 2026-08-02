@@ -188,6 +188,14 @@ the timer. Warning state uses 15%/20% hysteresis (low at 15% or below, cleared
 at 20% or above); unknown samples retain the prior warning state. Hardware
 validation of this telemetry remains pending.
 
+For the development low-battery gate, uppercase `B` injects one synthetic
+unplugged 15% sample (it never writes gauge hardware or telemetry). Two
+consecutive qualifying samples request the normal staged autosave; deep sleep
+is entered only after commit reread verification succeeds. Unknown samples,
+charging, busy persistence, and 16-19% readings suppress or reset confirmation.
+Lowercase `b` remains the real read-only battery check; USB charging normally
+suppresses the gate. Hardware validation of this safety path remains pending.
+
 Deep-sleep wake resumes now execute bounded emulator catch-up before normal
 renderer startup when RTC elapsed time is valid. Execution is capped at 300
 planned seconds, 2,000,000 instruction attempts, or a 10-second boot watchdog;

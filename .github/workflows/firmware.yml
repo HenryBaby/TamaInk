@@ -50,6 +50,8 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/test_autosave.cpp -o /tmp/tamaink-autosave-tests && /tmp/tamaink-autosave-tests
       - name: Run battery telemetry policy host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_battery_telemetry.cpp test/host/test_battery_telemetry.cpp -o /tmp/tamaink-battery-telemetry-tests && /tmp/tamaink-battery-telemetry-tests
+      - name: Run low-battery sleep coordinator host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_low_battery_sleep.cpp test/host/test_low_battery_sleep.cpp -o /tmp/tamaink-low-battery-sleep-tests && /tmp/tamaink-low-battery-sleep-tests
       - name: Run wake diagnostic coordinator host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/wake_diagnostic_test.cpp -o /tmp/tamaink-wake-tests && /tmp/tamaink-wake-tests
       - name: Run RTC sleep gate host tests

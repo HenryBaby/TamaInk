@@ -24,6 +24,7 @@
 #include "tamaink_wake_catchup_plan.h"
 #include "tamaink_wake_catchup.h"
 #include "tamaink_battery_telemetry.h"
+#include "tamaink_low_battery_sleep.h"
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -46,6 +47,8 @@ bool inputReady = false;
 bool emulatorActive = false;
 tamaink::battery::WarningPolicy batteryWarning;
 tamaink::battery::Schedule batteryTelemetrySchedule;
+tamaink::low_battery::Coordinator lowBatterySleep;
+tamaink::low_battery::TransactionArbiter saveArbiter;
 tamaink::tamalib::Adapter emulator;
 std::uint16_t* emulatorProgram = nullptr;
 tamaink::tamalib::Snapshot emulatorSnapshot{};
@@ -324,7 +327,7 @@ bool startEmulator() {
     }
   }
   if (!resumed) Serial.println("Persistence: no importable state; starting fresh");
-  Serial.println("Commands: a autosave-now; b battery telemetry; l toggle LCD frames; p manual-save; n next-phase; w save+deep-sleep wake diagnostic; c corrupt-newest; x cleanup-owned-state");
+  Serial.println("Commands: a autosave-now; b battery telemetry; B inject one unplugged-low sample (dev); l toggle LCD frames; p manual-save; n next-phase; w save+deep-sleep wake diagnostic; c corrupt-newest; x cleanup-owned-state");
   autosaveController.arm(millis(), AUTOSAVE_INTERVAL_MS);
   emulatorActive = true;
   batteryTelemetrySchedule.arm(millis());
@@ -654,7 +657,45 @@ bool sampleBatteryTelemetry(const char* source) {
   if (status.millivoltsKnown) Serial.printf("(%u)", status.millivolts);
   Serial.printf(" charging=%s warning=%s\n", status.chargingKnown ? (status.charging ? "yes" : "no") : "unknown", batteryWarningName(result.state));
   if (result.changed) Serial.printf("Battery warning transition: %s\n", batteryWarningName(result.state));
+  tamaink::low_battery::Sample sample{status.percentageKnown && status.percentage <= 100,
+                                      status.percentage, status.chargingKnown, status.charging};
+  const bool ready = emulatorActive && persistenceReady && persistenceState == PersistenceState::Idle &&
+                     !autosaveController.automatic && !autosaveController.scheduler.immediate && !wakeDiagnostic.pending && !wakeDiagnostic.requested &&
+                     persistenceState != PersistenceState::AwaitReset;
+  if (lowBatterySleep.observe(sample, ready)) {
+    if (!saveArbiter.claim(tamaink::low_battery::Owner::LowBattery)) {
+      lowBatterySleep.saveFailed();
+      Serial.println("Low-battery sleep refused: save transaction already owned");
+      return true;
+    }
+    tamaink::autosave::request(autosaveController.scheduler);
+    Serial.println("Low-battery sleep requested: durable save will begin");
+  }
   return true;
+}
+
+void injectLowBatterySample() {
+  if (lowBatterySleep.pending() || lowBatterySleep.latched()) {
+    Serial.println("Battery telemetry source=diagnostic-B injected percentage=15% charging=no; low-battery request already pending/latched (ignored)");
+    return;
+  }
+  const unsigned before = lowBatterySleep.consecutive();
+  Serial.printf("Battery telemetry source=diagnostic-B injected percentage=15%% charging=no (confirmation %u/2)\n",
+                before >= 1 ? 2u : 1u);
+  const bool ready = emulatorActive && persistenceReady && persistenceState == PersistenceState::Idle &&
+                     !autosaveController.automatic && !autosaveController.scheduler.immediate && !wakeDiagnostic.pending && !wakeDiagnostic.requested &&
+                     persistenceState != PersistenceState::AwaitReset;
+  if (lowBatterySleep.observe({true, 15, true, false}, ready)) {
+    if (!saveArbiter.claim(tamaink::low_battery::Owner::LowBattery)) {
+      lowBatterySleep.saveFailed();
+      Serial.println("Low-battery sleep refused: save transaction already owned");
+      return;
+    }
+    tamaink::autosave::request(autosaveController.scheduler);
+    Serial.println("Low-battery sleep requested: durable save will begin");
+  } else if (lowBatterySleep.consecutive() < 2) {
+    Serial.printf("Low-battery confirmation %u/2; staying awake\n", lowBatterySleep.consecutive());
+  }
 }
 
 void beginInputDiagnostic() {
@@ -797,10 +838,11 @@ void scanPersistence() {
   if (newest >= 0) { persistenceSlot = static_cast<uint8_t>(newest); persistenceGeneration = persistenceBootRecord[newest].generation; Serial.printf("Persistence selected slot %c generation=%lu\n", 'A' + newest, static_cast<unsigned long>(persistenceGeneration)); }
 }
 
-void failPersistenceWrite(const char* why) { if (persistenceFile) persistenceFile.close(); persistenceState = PersistenceState::Idle; wakeDiagnostic.saveFailed(); autosaveController.writeFailure(millis(), AUTOSAVE_RETRY_MS); if (wakeDiagnostic.requested) Serial.println("Wake diagnostic canceled: save failed"); wakeDiagnostic.requested = false; Serial.printf("Persistence transaction failed: %s; rescanning\n", why); scanPersistence(); }
+void failPersistenceWrite(const char* why) { if (persistenceFile) persistenceFile.close(); persistenceState = PersistenceState::Idle; wakeDiagnostic.saveFailed(); if (saveArbiter.owner() == tamaink::low_battery::Owner::LowBattery) lowBatterySleep.saveFailed(); saveArbiter.fail(saveArbiter.owner()); autosaveController.writeFailure(millis(), AUTOSAVE_RETRY_MS); if (wakeDiagnostic.requested) Serial.println("Wake diagnostic canceled: save failed"); wakeDiagnostic.requested = false; Serial.printf("Persistence transaction failed: %s; rescanning\n", why); scanPersistence(); }
 
-void enterWakeDiagnosticSleep() {
-  Serial.println("Wake diagnostic: save verified; preparing deep sleep");
+void enterWakeDiagnosticSleep(tamaink::low_battery::Owner sleepOwner = tamaink::low_battery::Owner::WakeDiagnostic) {
+  const bool lowBatterySleepRequested = sleepOwner == tamaink::low_battery::Owner::LowBattery;
+  Serial.println(lowBatterySleepRequested ? "Low-battery sleep: save verified; preparing deep sleep" : "Wake diagnostic: save verified; preparing deep sleep");
   Serial.flush();
   const auto& input = BoardConfig::ACTIVE.input;
   const int8_t powerPin = input.power;
@@ -814,18 +856,20 @@ void enterWakeDiagnosticSleep() {
     released = digitalRead(powerPin) != pressedLevel;
   }
   if (!released) {
+    if (sleepOwner == tamaink::low_battery::Owner::LowBattery) lowBatterySleep.saveFailed();
     wakeDiagnostic.armFailed();
     wakeDiagnostic.requested = false;
-    Serial.println("Wake diagnostic canceled: power-button release timeout");
+    Serial.println(lowBatterySleepRequested ? "Low-battery sleep canceled: power-button release timeout" : "Wake diagnostic canceled: power-button release timeout");
     if (emulatorActive && !rendererEnabled) {
       if (startRenderer()) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
     }
     return;
   }
   if (!freeink::PowerManager::armPowerButtonWakeup()) {
+    if (sleepOwner == tamaink::low_battery::Owner::LowBattery) lowBatterySleep.saveFailed();
     wakeDiagnostic.armFailed();
     wakeDiagnostic.requested = false;
-    Serial.println("Wake diagnostic canceled: power-button wake arm failed");
+    Serial.println(lowBatterySleepRequested ? "Low-battery sleep canceled: power-button wake arm failed" : "Wake diagnostic canceled: power-button wake arm failed");
     return;
   }
   // Quiesce and join the renderer before touching its framebuffer.
@@ -846,13 +890,14 @@ void enterWakeDiagnosticSleep() {
     releasedAgain = digitalRead(powerPin) != pressedLevel;
   }
   if (!releasedAgain || !freeink::PowerManager::armPowerButtonWakeup()) {
-    Serial.println("Wake diagnostic canceled: final GPIO3 release/arm failed; restoring renderer");
+    if (sleepOwner == tamaink::low_battery::Owner::LowBattery) lowBatterySleep.saveFailed();
+    Serial.println(lowBatterySleepRequested ? "Low-battery sleep canceled: final GPIO3 release/arm failed; restoring renderer" : "Wake diagnostic canceled: final GPIO3 release/arm failed; restoring renderer");
     wakeDiagnostic.armFailed(); wakeDiagnostic.requested = false;
     if (emulatorActive && !rendererEnabled && startRenderer()) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
     return;
   }
   freeink::PowerManager::powerDownRailsForSleep();
-  Serial.println("Wake diagnostic: armed GPIO3 power-button wake; entering deep sleep");
+  Serial.println(lowBatterySleepRequested ? "Low-battery sleep: armed GPIO3 power-button wake; entering deep sleep" : "Wake diagnostic: armed GPIO3 power-button wake; entering deep sleep");
   Serial.flush();
   freeink::PowerManager::deepSleep();
 }
@@ -863,6 +908,11 @@ void cancelWakeDiagnosticSave() {
     if (wakeDiagnostic.requested) Serial.println("Wake diagnostic canceled: save failed");
     wakeDiagnostic.requested = false;
   }
+  if (saveArbiter.owner() == tamaink::low_battery::Owner::LowBattery || lowBatterySleep.pending()) {
+    lowBatterySleep.saveFailed(); saveArbiter.fail(tamaink::low_battery::Owner::LowBattery);
+    Serial.println("Low-battery sleep canceled: save refused");
+  }
+  if (saveArbiter.owner() != tamaink::low_battery::Owner::None) saveArbiter.fail(saveArbiter.owner());
 }
 
 const char* wakeupCauseName(esp_sleep_wakeup_cause_t cause) {
@@ -880,13 +930,19 @@ const char* wakeupCauseName(esp_sleep_wakeup_cause_t cause) {
 
 void persistenceCommand(char c, bool internal = false) {
   if (c != 'p' && c != 'n' && c != 'c' && c != 'x') return;
-  if (!wakeDiagnostic.mutationAllowed(internal)) { Serial.println("Persistence command refused: wake diagnostic save pending"); return; }
-  if (!internal && !autosaveController.manualAllowed(persistenceState == PersistenceState::AwaitReset)) { Serial.println(persistenceState == PersistenceState::AwaitReset ? "Persistence command refused: await physical reset" : "Persistence command refused: automatic save in progress"); return; }
-  if (!emulatorActive) { Serial.println("Persistence command refused: emulator inactive"); return; }
-  if (!persistenceReady) { Serial.println("Persistence command refused: SD unavailable"); return; }
-  if (persistenceState == PersistenceState::AwaitReset) { Serial.println("Persistence command refused: await physical reset"); return; }
+  if (!internal && c == 'p' && !saveArbiter.claim(tamaink::low_battery::Owner::Manual)) { Serial.println("Persistence command refused: save transaction owned"); return; }
+  if (!internal && c == 'n' && saveArbiter.owner() != tamaink::low_battery::Owner::Manual) { Serial.println("Persistence command refused: not manual owner"); return; }
+  if (!internal && (c == 'c' || c == 'x') && saveArbiter.owner() != tamaink::low_battery::Owner::None) { Serial.println("Persistence command refused: save transaction owned"); return; }
+  if (!wakeDiagnostic.mutationAllowed(internal)) { if (c == 'p') cancelWakeDiagnosticSave(); Serial.println("Persistence command refused: wake diagnostic save pending"); return; }
+  if (!internal && !autosaveController.manualAllowed(persistenceState == PersistenceState::AwaitReset)) { if (c == 'p') cancelWakeDiagnosticSave(); Serial.println(persistenceState == PersistenceState::AwaitReset ? "Persistence command refused: await physical reset" : "Persistence command refused: automatic save in progress"); return; }
+  if (!emulatorActive) { if (c == 'p') cancelWakeDiagnosticSave(); Serial.println("Persistence command refused: emulator inactive"); return; }
+  if (!persistenceReady) { if (c == 'p') cancelWakeDiagnosticSave(); Serial.println("Persistence command refused: SD unavailable"); return; }
+  if (persistenceState == PersistenceState::AwaitReset) { if (c == 'p') cancelWakeDiagnosticSave(); Serial.println("Persistence command refused: await physical reset"); return; }
   if (c == 'p') {
-    if (persistenceState != PersistenceState::Idle) return;
+    if (persistenceState != PersistenceState::Idle) {
+      if (!internal) saveArbiter.fail(tamaink::low_battery::Owner::Manual);
+      return;
+    }
     if (!SdMan.ensureDirectoryExists(kPersistDir)) { cancelWakeDiagnosticSave(); Serial.println("Persistence p refused: directory create failed"); return; }
     const uint8_t target = persistenceHasSelected ? static_cast<uint8_t>(1 - persistenceSlot) : 0;
     const uint32_t next = persistenceHasSelected ? persistenceGeneration + 1u : 0u;
@@ -911,7 +967,50 @@ void persistenceCommand(char c, bool internal = false) {
     else if (persistenceState == PersistenceState::Partial) { const size_t rem = persistenceRecordSize - partial; if (persistenceFile.write(persistenceRecord + partial, rem) != rem) { failPersistenceWrite("remainder write"); return; } persistenceState = PersistenceState::Complete; Serial.println(internal ? "Autosave phase: complete" : "Persistence CompleteUnsynced; reset now or send n"); }
     else if (persistenceState == PersistenceState::Complete) { if (!persistenceFile.sync()) { failPersistenceWrite("sync"); return; } persistenceState = PersistenceState::Synced; Serial.println(internal ? "Autosave phase: synced" : "Persistence Synced; reset now or send n"); }
     else if (persistenceState == PersistenceState::Synced) { persistenceFile.close(); if (!verifyStagedSlot(persistencePendingSlot)) { failPersistenceWrite("staged validation"); return; } persistenceState = PersistenceState::Verified; Serial.println(internal ? "Autosave phase: verified" : "Persistence Verified staged; reset now or send n to commit"); }
-    else if (persistenceState == PersistenceState::Verified) { persistenceFile = SdMan.open(kPersistPaths[persistencePendingSlot], O_RDWR); if (!persistenceFile || !persistenceFile.seek(tamaink::persist::kCrcOffset) || persistenceFile.write(persistenceExpected + tamaink::persist::kCrcOffset, tamaink::persist::kCrcSize) != tamaink::persist::kCrcSize || !persistenceFile.sync()) { failPersistenceWrite("commit"); return; } persistenceFile.close(); if (!readPersistenceSlot(persistencePendingSlot, persistenceBootRecord[0]) || !payloadMatches(persistenceBootRecord[0]) || persistenceBootRecord[0].generation != persistencePendingGeneration) { Serial.println("Persistence commit rejected: reread validation failed; prior slot retained"); persistenceState = PersistenceState::Idle; wakeDiagnostic.saveFailed(); if (wakeDiagnostic.requested) Serial.println("Wake diagnostic canceled: save failed"); wakeDiagnostic.requested = false; autosaveController.commitRereadFailure(millis(), AUTOSAVE_RETRY_MS); scanPersistence(); return; } persistenceSlot = persistencePendingSlot; persistenceGeneration = persistencePendingGeneration; persistenceHasSelected = true; persistenceState = PersistenceState::Idle; autosaveController.successCommit(millis(), AUTOSAVE_INTERVAL_MS); Serial.println("Persistence commit complete and verified"); if (wakeDiagnostic.saveSucceeded()) { wakeDiagnostic.requested = false; enterWakeDiagnosticSleep(); } }
+    else if (persistenceState == PersistenceState::Verified) {
+      persistenceFile = SdMan.open(kPersistPaths[persistencePendingSlot], O_RDWR);
+      if (!persistenceFile || !persistenceFile.seek(tamaink::persist::kCrcOffset) ||
+          persistenceFile.write(persistenceExpected + tamaink::persist::kCrcOffset,
+                                tamaink::persist::kCrcSize) != tamaink::persist::kCrcSize ||
+          !persistenceFile.sync()) {
+        failPersistenceWrite("commit");
+        return;
+      }
+      persistenceFile.close();
+      if (!readPersistenceSlot(persistencePendingSlot, persistenceBootRecord[0]) ||
+          !payloadMatches(persistenceBootRecord[0]) ||
+          persistenceBootRecord[0].generation != persistencePendingGeneration) {
+        Serial.println("Persistence commit rejected: reread validation failed; prior slot retained");
+        persistenceState = PersistenceState::Idle;
+        wakeDiagnostic.saveFailed();
+        if (saveArbiter.owner() == tamaink::low_battery::Owner::LowBattery) lowBatterySleep.saveFailed();
+        saveArbiter.fail(saveArbiter.owner());
+        if (wakeDiagnostic.requested) Serial.println("Wake diagnostic canceled: save failed");
+        wakeDiagnostic.requested = false;
+        autosaveController.commitRereadFailure(millis(), AUTOSAVE_RETRY_MS);
+        scanPersistence();
+        return;
+      }
+      persistenceSlot = persistencePendingSlot;
+      persistenceGeneration = persistencePendingGeneration;
+      persistenceHasSelected = true;
+      persistenceState = PersistenceState::Idle;
+      autosaveController.successCommit(millis(), AUTOSAVE_INTERVAL_MS);
+      Serial.println("Persistence commit complete and verified");
+      const auto owner = saveArbiter.owner();
+      if (owner == tamaink::low_battery::Owner::WakeDiagnostic) {
+        const bool sleepReady = wakeDiagnostic.saveSucceeded();
+        wakeDiagnostic.requested = false;
+        saveArbiter.complete(owner);
+        if (sleepReady) enterWakeDiagnosticSleep(owner);
+      } else if (owner == tamaink::low_battery::Owner::LowBattery) {
+        lowBatterySleep.saveSucceeded();
+        saveArbiter.complete(owner);
+        enterWakeDiagnosticSleep(owner);
+      } else {
+        saveArbiter.complete(owner);
+      }
+    }
     return;
   }
   if (persistenceState != PersistenceState::Idle) return;
@@ -930,18 +1029,25 @@ void persistenceCommand(char c, bool internal = false) {
 }
 
 void dispatchSerialCommand(char c) {
+  if (c == 'B') {
+    if (!emulatorActive) { Serial.println("Battery diagnostic B refused: emulator inactive"); return; }
+    injectLowBatterySample();
+    return;
+  }
   if (c == 'b') {
     if (!emulatorActive) { Serial.println("Battery telemetry refused: emulator inactive"); return; }
     if (sampleBatteryTelemetry("manual")) batteryTelemetrySchedule.arm(millis());
     return;
   }
   if (c == 'w') {
-    if (!wakeDiagnostic.request(emulatorActive, persistenceReady, persistenceState == PersistenceState::Idle, autosaveController.automatic, persistenceState == PersistenceState::AwaitReset)) { Serial.println("Wake diagnostic refused: emulator/SD busy, await reset, or request pending"); return; }
+    if (!saveArbiter.claim(tamaink::low_battery::Owner::WakeDiagnostic)) { Serial.println("Wake diagnostic refused: save transaction owned"); return; }
+    if (!wakeDiagnostic.request(emulatorActive, persistenceReady, persistenceState == PersistenceState::Idle, autosaveController.automatic, persistenceState == PersistenceState::AwaitReset)) { saveArbiter.fail(tamaink::low_battery::Owner::WakeDiagnostic); Serial.println("Wake diagnostic refused: emulator/SD busy, await reset, or request pending"); return; }
     tamaink::autosave::request(autosaveController.scheduler); Serial.println("Wake diagnostic requested: durable save will begin"); return;
   }
   if (c == 'a') {
-    if (wakeDiagnostic.pending) { Serial.println("Autosave request refused: wake diagnostic save pending"); return; }
-    if (persistenceState != PersistenceState::Idle || autosaveController.automatic) { Serial.println("Autosave request refused: transaction busy"); return; }
+    if (!saveArbiter.claim(tamaink::low_battery::Owner::Automatic)) { Serial.println("Autosave request refused: save transaction owned"); return; }
+    if (wakeDiagnostic.pending) { saveArbiter.fail(tamaink::low_battery::Owner::Automatic); Serial.println("Autosave request refused: wake diagnostic save pending"); return; }
+    if (persistenceState != PersistenceState::Idle || autosaveController.automatic) { saveArbiter.fail(tamaink::low_battery::Owner::Automatic); Serial.println("Autosave request refused: transaction busy"); return; }
     tamaink::autosave::request(autosaveController.scheduler); Serial.println("Autosave requested"); return;
   }
   if (c == 'l') {
@@ -1053,8 +1159,12 @@ void loop() {
     const uint32_t nowAuto = millis();
     if (autosaveController.tick(nowAuto, persistenceState == PersistenceState::Idle, persistenceState == PersistenceState::AwaitReset) == tamaink::autosave::Action::Begin) {
       Serial.println("Autosave: starting staged transaction");
+      if (saveArbiter.owner() == tamaink::low_battery::Owner::None) saveArbiter.claim(tamaink::low_battery::Owner::Automatic);
       persistenceCommand('p', true);
-      if (persistenceState == PersistenceState::Idle) autosaveController.beginFailure(nowAuto, AUTOSAVE_RETRY_MS);
+      if (persistenceState == PersistenceState::Idle) {
+        cancelWakeDiagnosticSave();
+        autosaveController.beginFailure(nowAuto, AUTOSAVE_RETRY_MS);
+      }
     } else if (autosaveController.advance(persistenceState == PersistenceState::Idle) == tamaink::autosave::Action::Advance) {
       persistenceCommand('n', true);
     }
