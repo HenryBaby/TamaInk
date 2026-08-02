@@ -2,8 +2,7 @@
 
 TamaInk turns an Xteink X3 into a dedicated, persistent Tamagotchi P1 device.
 It boots directly into the emulator, maps the X3's three physical buttons to
-the original controls, and presents a purpose-built monochrome interface on
-the e-ink display.
+the original controls, and presents a purpose-built monochrome interface.
 
 > [!CAUTION]
 > Current builds are pre-release firmware for unlocked, directly
@@ -28,7 +27,7 @@ the e-ink display.
 ## Preparing the microSD card
 
 TamaInk does not include, distribute, download, or generate Tamagotchi ROMs.
-You must supply your own compatible packed P1 ROM.
+You must supply your own compatible Tamagotchi P1 ROM.
 
 1. Format a microSD card using a filesystem supported by the X3.
 2. Place the ROM at the card root as `/rom.bin`.
