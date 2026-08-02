@@ -40,7 +40,7 @@ namespace {
 constexpr uint8_t BUTTON_COUNT = InputManager::BTN_POWER + 1;
 constexpr unsigned long INPUT_REPOLL_MS = 6;
 constexpr unsigned long HOLD_REPORT_INTERVAL_MS = 1000;
-constexpr unsigned long RENDERER_MIN_REFRESH_INTERVAL_MS = 500;
+constexpr unsigned long RENDERER_MIN_REFRESH_INTERVAL_MS = 400;
 constexpr unsigned long EMULATOR_SERIAL_FRAME_INTERVAL_MS = 250;
 
 InputManager inputManager;

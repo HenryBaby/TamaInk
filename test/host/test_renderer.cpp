@@ -96,8 +96,23 @@ int main() {
         assert(black(marked, x3Stride, x0 + 9 + gy * 6 + px, y0 + 9 + (4u - gx) * 6 + py) ==
                ((glyphs[bit][gy] & (1u << (4u - gx))) != 0));
     assert(black(marked, x3Stride, x0 + 3, y0 + 3));
-    assert(black(marked, x3Stride, x0 + 8, y0 + 3));
-    assert(!black(marked, x3Stride, x0 + 24, y0 + 3));
+    assert(black(marked, x3Stride, x0 + 5, y0 + 5)); // 3px-thick corner
+    assert(black(marked, x3Stride, x0 + 14, y0 + 3)); // 12px arm
+    assert(!black(marked, x3Stride, x0 + 15, y0 + 3));
+    assert(!black(marked, x3Stride, x0 + 24, y0 + 3)); // open edge midpoint
+    assert(black(marked, x3Stride, x0 + 44, y0 + 3));
+    assert(black(marked, x3Stride, x0 + 42, y0 + 5));
+    assert(black(marked, x3Stride, x0 + 33, y0 + 3));
+    assert(!black(marked, x3Stride, x0 + 32, y0 + 3));
+    assert(black(marked, x3Stride, x0 + 3, y0 + 44));
+    assert(black(marked, x3Stride, x0 + 5, y0 + 42));
+    assert(black(marked, x3Stride, x0 + 14, y0 + 44));
+    assert(!black(marked, x3Stride, x0 + 15, y0 + 44));
+    assert(black(marked, x3Stride, x0 + 44, y0 + 44));
+    assert(black(marked, x3Stride, x0 + 42, y0 + 42));
+    assert(black(marked, x3Stride, x0 + 33, y0 + 44));
+    assert(!black(marked, x3Stride, x0 + 32, y0 + 44));
+    assert(!black(marked, x3Stride, x0 + 24, y0 + 48)); // no spill
     assert(!black(marked, x3Stride, x0 - 1, y0 + 24));
     assert(!black(marked, x3Stride, x0 + 47, y0 + 24));
     // LCD footprint remains white when icons are the only source bits.

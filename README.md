@@ -48,13 +48,14 @@ in a single physical row along the bottom edge of the portrait display
 (framebuffer x=744 on the 792px X3 panel; tops at
 y=464,400,336,272,208,144,80,16 for bits 0 through 7). Inactive icons show
 only their glyph; active icons add four open corner brackets around the 48px
-extent. Hardware confirms the semantic order and rotated top/bottom mapping:
+extent, with 3px thickness and 12px arms leaving edge midpoints open. Hardware
+confirms the semantic order and rotated top/bottom mapping:
 Food, Light, Game, Medicine, Toilet, Health, Discipline, Attention. The new
 bottom-edge placement still requires its hardware validation gate.
 UC8279d and other controllers
 keep the serial emulator active with rendering disabled. The renderer performs
 one initial full refresh, then UC8253 fast refreshes no more often than once per
-500 ms; no periodic cleaning refresh is enabled in this increment.
+400 ms; no periodic cleaning refresh is enabled in this increment.
 
 The complete requirements, safety contract, and delivery gates are documented
 in [SCOPE.md](SCOPE.md).

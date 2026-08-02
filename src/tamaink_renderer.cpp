@@ -83,16 +83,18 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
               for (std::int64_t px = 0; px < cell; ++px)
                 pixel(glyphOriginX + gy * cell + px, glyphOriginY + (4u - gx) * cell + py, true);
       if (active) {
-        constexpr std::int64_t inset = 3, length = 6;
-        for (std::int64_t i = 0; i < length; ++i) {
-          pixel(x0 + inset + i, y0 + inset, true); pixel(x0 + inset, y0 + inset + i, true);
-          pixel(x0 + markerSide - inset - 1 - i, y0 + inset, true);
-          pixel(x0 + markerSide - inset - 1, y0 + inset + i, true);
-          pixel(x0 + inset + i, y0 + markerSide - inset - 1, true);
-          pixel(x0 + inset, y0 + markerSide - inset - 1 - i, true);
-          pixel(x0 + markerSide - inset - 1 - i, y0 + markerSide - inset - 1, true);
-          pixel(x0 + markerSide - inset - 1, y0 + markerSide - inset - 1 - i, true);
-        }
+        constexpr std::int64_t inset = 3, thickness = 3, length = 12;
+        for (std::int64_t t = 0; t < thickness; ++t)
+          for (std::int64_t i = 0; i < length; ++i) {
+            pixel(x0 + inset + i, y0 + inset + t, true);
+            pixel(x0 + inset + t, y0 + inset + i, true);
+            pixel(x0 + markerSide - inset - 1 - i, y0 + inset + t, true);
+            pixel(x0 + markerSide - inset - 1 - t, y0 + inset + i, true);
+            pixel(x0 + inset + i, y0 + markerSide - inset - 1 - t, true);
+            pixel(x0 + inset + t, y0 + markerSide - inset - 1 - i, true);
+            pixel(x0 + markerSide - inset - 1 - i, y0 + markerSide - inset - 1 - t, true);
+            pixel(x0 + markerSide - inset - 1 - t, y0 + markerSide - inset - 1 - i, true);
+          }
       }
     }
   }
