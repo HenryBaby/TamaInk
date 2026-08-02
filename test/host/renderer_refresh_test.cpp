@@ -12,16 +12,16 @@ int main() {
   // A rendered/rejected snapshot that is never presented does not advance.
   assert(cadence.next() == RefreshKind::Fast);
   assert(cadence.fastFrames() == 0);
-  for (int i = 0; i < 8; ++i) {
+  for (int i = 0; i < 64; ++i) {
     assert(cadence.next() == RefreshKind::Fast);
     cadence.presented(RefreshKind::Fast);
   }
-  assert(cadence.fastFrames() == 8);
+  assert(cadence.fastFrames() == 64);
   assert(cadence.next() == RefreshKind::Full);
   cadence.presented(RefreshKind::Full);
   assert(cadence.fastFrames() == 0);
   for (int cycle = 0; cycle < 3; ++cycle) {
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 64; ++i) {
       assert(cadence.next() == RefreshKind::Fast);
       cadence.presented(RefreshKind::Fast);
     }
@@ -34,7 +34,7 @@ int main() {
   assert(cadence.fastFrames() == 1);
   // Saturation protects against overflow and keeps promotion deterministic.
   for (int i = 0; i < 255; ++i) cadence.presented(RefreshKind::Fast);
-  assert(cadence.fastFrames() == 8);
+  assert(cadence.fastFrames() == 64);
   assert(cadence.next() == RefreshKind::Full);
   return 0;
 }

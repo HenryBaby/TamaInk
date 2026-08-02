@@ -54,11 +54,13 @@ extent, with 3px thickness and 12px arms leaving edge midpoints open. Hardware
 confirms the semantic order and rotated top/bottom mapping:
 Food, Light, Game, Medicine, Toilet, Health, Discipline, Attention. The new
 bottom-edge placement is hardware validated by PR#16. The renderer performs
-one initial full refresh, then up to eight successfully presented UC8253 fast
+one initial full refresh, then up to 64 successfully presented UC8253 fast
 refreshes before promoting the next changed frame to a periodic full refresh;
-periodic-cleaning behavior is hardware-pending. UC8279d and other controllers
-keep the serial emulator active with rendering disabled. UC8253 fast refreshes
-occur no more often than once per 400 ms.
+periodic-cleaning behavior is hardware-pending. LCD-only animation changes are
+coalesced to at most one panel update per 1500 ms, while icon changes remain
+immediately eligible for the renderer's 400 ms minimum interval and mandatory
+BUSY wait. UC8279d and other controllers keep the serial emulator active with
+rendering disabled.
 
 The complete requirements, safety contract, and delivery gates are documented
 in [SCOPE.md](SCOPE.md).

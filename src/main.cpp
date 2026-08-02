@@ -16,6 +16,7 @@
 #include "tamaink_tamalib.h"
 #include "tamaink_renderer.h"
 #include "tamaink_renderer_refresh.h"
+#include "tamaink_renderer_dispatch.h"
 #include "tamaink_emulator_state.h"
 #include "tamaink_autosave.h"
 #include "tamaink_wake_diagnostic.h"
@@ -63,7 +64,7 @@ bool serialLcdFramesEnabled = false;
 tamaink::autosave::Controller autosaveController{};
 constexpr uint32_t AUTOSAVE_INTERVAL_MS = 15UL * 60UL * 1000UL;
 constexpr uint32_t AUTOSAVE_RETRY_MS = 60UL * 1000UL;
-bool rendererFramePending = false;
+tamaink::render::FrameDispatch rendererDispatch;
 unsigned long emulatorLastPrintAt = 0;
 EInkDisplay* rendererDisplay = nullptr;
 QueueHandle_t rendererQueue = nullptr;
@@ -139,7 +140,7 @@ void rendererTask(void*) {
       rendererFirstFrameConfirmed = !rendererDisplay->refreshBusy();
       if (rendererFirstFrameConfirmed) rendererDisplay->skipInitialResync();
       if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone);
-    } else if (periodicPromotion) Serial.println("Display renderer: periodic full refresh after 8 fast frames");
+    } else if (periodicPromotion) Serial.println("Display renderer: periodic full refresh after 64 fast frames");
     lastRefresh = millis(); first = false;
     if (rendererStopRequested) break;
     vTaskDelay(1);
@@ -344,7 +345,7 @@ bool startEmulator() {
   Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; hold BACK+POWER >=2000 ms, then release for wake diagnostic; display refresh bypassed");
   printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
   emulatorObserved = emulatorSnapshot; emulatorObservedValid = true;
-  serialFramePending = false; rendererFramePending = false; emulatorLastPrintAt = millis();
+  serialFramePending = false; rendererDispatch.reset(); emulatorLastPrintAt = millis();
   return true;
 }
 
@@ -904,7 +905,8 @@ void enterWakeDiagnosticSleep(tamaink::low_battery::Owner sleepOwner = tamaink::
     wakeDiagnostic.requested = false;
     Serial.println(lowBatterySleepRequested ? "Low-battery sleep canceled: power-button release timeout" : "Wake diagnostic canceled: power-button release timeout");
     if (emulatorActive && !rendererEnabled) {
-      if (startRenderer()) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
+      if (startRenderer() && xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+        rendererDispatch.queued(millis());
     }
     return;
   }
@@ -936,7 +938,9 @@ void enterWakeDiagnosticSleep(tamaink::low_battery::Owner sleepOwner = tamaink::
     if (sleepOwner == tamaink::low_battery::Owner::LowBattery) lowBatterySleep.saveFailed();
     Serial.println(lowBatterySleepRequested ? "Low-battery sleep canceled: final GPIO3 release/arm failed; restoring renderer" : "Wake diagnostic canceled: final GPIO3 release/arm failed; restoring renderer");
     wakeDiagnostic.armFailed(); wakeDiagnostic.requested = false;
-    if (emulatorActive && !rendererEnabled && startRenderer()) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
+    if (emulatorActive && !rendererEnabled && startRenderer() &&
+        xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+      rendererDispatch.queued(millis());
     return;
   }
   freeink::PowerManager::powerDownRailsForSleep();
@@ -1141,7 +1145,7 @@ void setup() {
       const bool hadDeferredWakeCatchup = wakeCatchupPending;
       const bool rendererStarted = startRenderer();
       if (rendererStarted) {
-        xQueueOverwrite(rendererQueue, &emulatorSnapshot);
+        if (xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS) rendererDispatch.queued(millis());
         if (hadDeferredWakeCatchup && rendererFirstFrameDone &&
             xSemaphoreTake(rendererFirstFrameDone, pdMS_TO_TICKS(13000)) != pdTRUE)
           Serial.println("Display renderer: first-frame completion timed out; continuing wake catch-up");
@@ -1149,7 +1153,9 @@ void setup() {
           Serial.println("Display renderer: imported first frame was not confirmed; continuing wake catch-up");
       }
       if (hadDeferredWakeCatchup) runDeferredWakeCatchup();
-      if (hadDeferredWakeCatchup && rendererStarted && rendererEnabled) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
+      if (hadDeferredWakeCatchup && rendererStarted && rendererEnabled &&
+          xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+        rendererDispatch.queued(millis());
       return;
     }
 
@@ -1230,7 +1236,7 @@ void loop() {
       emulatorObserved = emulatorSnapshot;
       emulatorObservedValid = true;
       serialFramePending = serialLcdFramesEnabled;
-      if (lcdChanged || iconChanged) rendererFramePending = true;
+      if (lcdChanged || iconChanged) rendererDispatch.changed(iconChanged, millis());
     }
     const unsigned long now = millis();
     if (serialLcdFramesEnabled && serialFramePending && now - emulatorLastPrintAt >= EMULATOR_SERIAL_FRAME_INTERVAL_MS) {
@@ -1240,8 +1246,8 @@ void loop() {
       serialFramePending = false;
       emulatorLastPrintAt = now;
     }
-    if (rendererEnabled && rendererFramePending && xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
-      rendererFramePending = false;
+    if (rendererEnabled && rendererDispatch.eligible(now) && xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+      rendererDispatch.queued(now);
     delay(0);
     return;
   }
