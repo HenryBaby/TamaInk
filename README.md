@@ -165,7 +165,9 @@ not hardware validation.
 The live X3 gate scans `/.tamaink/state-a.bin` and `state-b.bin` after ROM
 validation, validates both the outer record and nested 694-byte emulator codec
 against a domain-separated `TINK` + CRC32 identity, and resumes the newest
-valid generation. LCD frame dumps are disabled by default; `l` toggles them
+valid generation. Autosave runs every 15 minutes with a 60-second retry
+backoff; `a` requests the same staged transaction immediately. LCD frame dumps
+are disabled by default; `l` toggles them
 and prints at most one current frame when enabled. Serial writes are manual:
 `p` begins export to the inactive
 slot; repeated `n` advances

@@ -46,6 +46,8 @@ jobs:
 
       - name: Run persistence codec host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_persistence.cpp src/tamaink_emulator_state.cpp test/host/test_persistence.cpp -o /tmp/tamaink-persistence-tests && /tmp/tamaink-persistence-tests
+      - name: Run autosave scheduler host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/test_autosave.cpp -o /tmp/tamaink-autosave-tests && /tmp/tamaink-autosave-tests
 
       - name: Run ROM validation host sanitizer tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_rom.cpp test/host/test_rom.cpp -o /tmp/tamaink-rom-tests && /tmp/tamaink-rom-tests

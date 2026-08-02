@@ -15,6 +15,7 @@
 #include "tamaink_tamalib.h"
 #include "tamaink_renderer.h"
 #include "tamaink_emulator_state.h"
+#include "tamaink_autosave.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -42,6 +43,9 @@ tamaink::tamalib::Snapshot emulatorObserved{};
 bool emulatorObservedValid = false;
 bool serialFramePending = false;
 bool serialLcdFramesEnabled = false;
+tamaink::autosave::Controller autosaveController{};
+constexpr uint32_t AUTOSAVE_INTERVAL_MS = 15UL * 60UL * 1000UL;
+constexpr uint32_t AUTOSAVE_RETRY_MS = 60UL * 1000UL;
 bool rendererFramePending = false;
 unsigned long emulatorLastPrintAt = 0;
 EInkDisplay* rendererDisplay = nullptr;
@@ -208,7 +212,8 @@ bool startEmulator() {
     }
   }
   if (!resumed) Serial.println("Persistence: no importable state; starting fresh");
-  Serial.println("Commands: l toggle LCD frames; p begin-save; n next-phase; c corrupt-newest; x cleanup-owned-state");
+  Serial.println("Commands: a autosave-now; l toggle LCD frames; p manual-save; n next-phase; c corrupt-newest; x cleanup-owned-state");
+  autosaveController.arm(millis(), AUTOSAVE_INTERVAL_MS);
   emulatorActive = true;
   Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; display refresh bypassed");
   printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
@@ -692,10 +697,11 @@ void scanPersistence() {
   if (newest >= 0) { persistenceSlot = static_cast<uint8_t>(newest); persistenceGeneration = persistenceBootRecord[newest].generation; Serial.printf("Persistence selected slot %c generation=%lu\n", 'A' + newest, static_cast<unsigned long>(persistenceGeneration)); }
 }
 
-void failPersistenceWrite(const char* why) { if (persistenceFile) persistenceFile.close(); persistenceState = PersistenceState::Idle; Serial.printf("Persistence transaction failed: %s; rescanning\n", why); scanPersistence(); }
+void failPersistenceWrite(const char* why) { if (persistenceFile) persistenceFile.close(); persistenceState = PersistenceState::Idle; autosaveController.writeFailure(millis(), AUTOSAVE_RETRY_MS); Serial.printf("Persistence transaction failed: %s; rescanning\n", why); scanPersistence(); }
 
-void persistenceCommand(char c) {
+void persistenceCommand(char c, bool internal = false) {
   if (c != 'p' && c != 'n' && c != 'c' && c != 'x') return;
+  if (!internal && !autosaveController.manualAllowed(persistenceState == PersistenceState::AwaitReset)) { Serial.println(persistenceState == PersistenceState::AwaitReset ? "Persistence command refused: await physical reset" : "Persistence command refused: automatic save in progress"); return; }
   if (!emulatorActive) { Serial.println("Persistence command refused: emulator inactive"); return; }
   if (!persistenceReady) { Serial.println("Persistence command refused: SD unavailable"); return; }
   if (persistenceState == PersistenceState::AwaitReset) { Serial.println("Persistence command refused: await physical reset"); return; }
@@ -721,11 +727,11 @@ void persistenceCommand(char c) {
   if (c == 'n') {
     if (persistenceState == PersistenceState::Idle) return;
     const size_t partial = tamaink::persist::kHeaderSize / 2;
-    if (persistenceState == PersistenceState::Open) { if (persistenceFile.write(persistenceRecord, partial) != partial) { failPersistenceWrite("partial write"); return; } persistenceState = PersistenceState::Partial; Serial.println("Persistence Partial complete; reset now or send n"); }
-    else if (persistenceState == PersistenceState::Partial) { const size_t rem = persistenceRecordSize - partial; if (persistenceFile.write(persistenceRecord + partial, rem) != rem) { failPersistenceWrite("remainder write"); return; } persistenceState = PersistenceState::Complete; Serial.println("Persistence CompleteUnsynced; reset now or send n"); }
-    else if (persistenceState == PersistenceState::Complete) { if (!persistenceFile.sync()) { failPersistenceWrite("sync"); return; } persistenceState = PersistenceState::Synced; Serial.println("Persistence Synced; reset now or send n"); }
-    else if (persistenceState == PersistenceState::Synced) { persistenceFile.close(); if (!verifyStagedSlot(persistencePendingSlot)) { failPersistenceWrite("staged validation"); return; } persistenceState = PersistenceState::Verified; Serial.println("Persistence Verified staged; reset now or send n to commit"); }
-    else if (persistenceState == PersistenceState::Verified) { persistenceFile = SdMan.open(kPersistPaths[persistencePendingSlot], O_RDWR); if (!persistenceFile || !persistenceFile.seek(tamaink::persist::kCrcOffset) || persistenceFile.write(persistenceExpected + tamaink::persist::kCrcOffset, tamaink::persist::kCrcSize) != tamaink::persist::kCrcSize || !persistenceFile.sync()) { failPersistenceWrite("commit"); return; } persistenceFile.close(); if (!readPersistenceSlot(persistencePendingSlot, persistenceBootRecord[0]) || !payloadMatches(persistenceBootRecord[0]) || persistenceBootRecord[0].generation != persistencePendingGeneration) { Serial.println("Persistence commit rejected: reread validation failed; prior slot retained"); persistenceState = PersistenceState::Idle; scanPersistence(); return; } persistenceSlot = persistencePendingSlot; persistenceGeneration = persistencePendingGeneration; persistenceHasSelected = true; persistenceState = PersistenceState::Idle; Serial.println("Persistence commit complete and verified"); }
+    if (persistenceState == PersistenceState::Open) { if (persistenceFile.write(persistenceRecord, partial) != partial) { failPersistenceWrite("partial write"); return; } persistenceState = PersistenceState::Partial; Serial.println(internal ? "Autosave phase: partial" : "Persistence Partial complete; reset now or send n"); }
+    else if (persistenceState == PersistenceState::Partial) { const size_t rem = persistenceRecordSize - partial; if (persistenceFile.write(persistenceRecord + partial, rem) != rem) { failPersistenceWrite("remainder write"); return; } persistenceState = PersistenceState::Complete; Serial.println(internal ? "Autosave phase: complete" : "Persistence CompleteUnsynced; reset now or send n"); }
+    else if (persistenceState == PersistenceState::Complete) { if (!persistenceFile.sync()) { failPersistenceWrite("sync"); return; } persistenceState = PersistenceState::Synced; Serial.println(internal ? "Autosave phase: synced" : "Persistence Synced; reset now or send n"); }
+    else if (persistenceState == PersistenceState::Synced) { persistenceFile.close(); if (!verifyStagedSlot(persistencePendingSlot)) { failPersistenceWrite("staged validation"); return; } persistenceState = PersistenceState::Verified; Serial.println(internal ? "Autosave phase: verified" : "Persistence Verified staged; reset now or send n to commit"); }
+    else if (persistenceState == PersistenceState::Verified) { persistenceFile = SdMan.open(kPersistPaths[persistencePendingSlot], O_RDWR); if (!persistenceFile || !persistenceFile.seek(tamaink::persist::kCrcOffset) || persistenceFile.write(persistenceExpected + tamaink::persist::kCrcOffset, tamaink::persist::kCrcSize) != tamaink::persist::kCrcSize || !persistenceFile.sync()) { failPersistenceWrite("commit"); return; } persistenceFile.close(); if (!readPersistenceSlot(persistencePendingSlot, persistenceBootRecord[0]) || !payloadMatches(persistenceBootRecord[0]) || persistenceBootRecord[0].generation != persistencePendingGeneration) { Serial.println("Persistence commit rejected: reread validation failed; prior slot retained"); persistenceState = PersistenceState::Idle; autosaveController.commitRereadFailure(millis(), AUTOSAVE_RETRY_MS); scanPersistence(); return; } persistenceSlot = persistencePendingSlot; persistenceGeneration = persistencePendingGeneration; persistenceHasSelected = true; persistenceState = PersistenceState::Idle; autosaveController.successCommit(millis(), AUTOSAVE_INTERVAL_MS); Serial.println("Persistence commit complete and verified"); }
     return;
   }
   if (persistenceState != PersistenceState::Idle) return;
@@ -740,10 +746,14 @@ void persistenceCommand(char c) {
     if (f.write(&b, 1) != 1 || !f.sync()) { f.close(); Serial.println("Persistence c failed"); return; }
     f.close(); persistenceState = PersistenceState::AwaitReset; Serial.println("Persistence newest corrupted; await physical reset"); return;
   }
-  if (c == 'x') { const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]); const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]); if (!a || !b) { Serial.println("Persistence cleanup failed"); scanPersistence(); return; } if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir); persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0; Serial.println("Persistence owned files cleaned"); }
+  if (c == 'x') { const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]); const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]); if (!a || !b) { Serial.println("Persistence cleanup failed"); scanPersistence(); return; } if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir); persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0; autosaveController.cleanup(millis(), AUTOSAVE_INTERVAL_MS); Serial.println("Persistence owned files cleaned"); }
 }
 
 void dispatchSerialCommand(char c) {
+  if (c == 'a') {
+    if (persistenceState != PersistenceState::Idle || autosaveController.automatic) { Serial.println("Autosave request refused: transaction busy"); return; }
+    tamaink::autosave::request(autosaveController.scheduler); Serial.println("Autosave requested"); return;
+  }
   if (c == 'l') {
     serialLcdFramesEnabled = !serialLcdFramesEnabled;
     if (serialLcdFramesEnabled) {
@@ -841,6 +851,14 @@ void loop() {
   if (emulatorActive) {
     updateEmulatorInput();
     while (Serial.available()) dispatchSerialCommand(static_cast<char>(Serial.read()));
+    const uint32_t nowAuto = millis();
+    if (autosaveController.tick(nowAuto, persistenceState == PersistenceState::Idle, persistenceState == PersistenceState::AwaitReset) == tamaink::autosave::Action::Begin) {
+      Serial.println("Autosave: starting staged transaction");
+      persistenceCommand('p', true);
+      if (persistenceState == PersistenceState::Idle) autosaveController.beginFailure(nowAuto, AUTOSAVE_RETRY_MS);
+    } else if (autosaveController.advance(persistenceState == PersistenceState::Idle) == tamaink::autosave::Action::Advance) {
+      persistenceCommand('n', true);
+    }
     emulator.step(64, &emulatorSnapshot);
     const bool lcdChanged = !emulatorObservedValid ||
         std::memcmp(emulatorSnapshot.lcd, emulatorObserved.lcd, sizeof emulatorSnapshot.lcd) != 0;
