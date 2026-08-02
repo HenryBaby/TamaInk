@@ -17,8 +17,25 @@ with source and binary distributions.
   applicable license text and complete corresponding source with distributed
   firmware
 
-The exact revision and imported paths will be recorded when the dependency is
-added.
+The repository includes the `tamalib` Git submodule gitlink at exact revision
+`ce304d55f9a73c60232ce3f552e7983db3fa399c` (upstream `master`, inspected
+2026-08-01). The host smoke harness compiles and links the upstream `cpu.c`,
+`hw.c`, and `tamalib.c` translation units and their public/private headers
+(`cpu.h`, `hw.h`, `tamalib.h`, `hal.h`, and `hal_types.h` template). The pinned tree contains
+the complete GPL text in `tamalib/LICENSE`; its source headers identify the
+license as GPL-2.0-or-later. No upstream TamaLib file is modified. The host
+smoke test uses a generated temporary copy solely to remove the upstream
+default `E0C6S48_SUPPORT` define and explicitly select E0C6S46. The
+project-owned host harness under `test/host` generates this temporary
+configuration and does not alter the submodule. For the live-state host gate,
+CI applies the project-owned patch `patches/tamalib-live-state.patch` to that
+exact revision using `scripts/apply_tamalib_patch.sh`; the patch preserves the
+upstream GPL headers and adds only POD export/import hooks for hidden CPU and
+TamaLib continuation state. The repository gitlink remains pinned; CI applies
+the patch to its fresh pinned checkout before host and firmware compilation and
+intentionally leaves that build worktree dirty. The adapted patch is distributed
+as corresponding source under the project's AGPL-3.0 terms together with the
+upstream GPL notices.
 
 ### FreeInk SDK
 

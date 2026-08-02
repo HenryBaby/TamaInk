@@ -1,5 +1,7 @@
 .pio/
 .vscode/
+__pycache__/
+*.pyc
 platformio.local.ini
 compile_commands.json
 
@@ -16,4 +18,3 @@ compile_commands.json
 rom.bin
 flash.bin
 *.img
-

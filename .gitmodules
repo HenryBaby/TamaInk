@@ -1,3 +1,6 @@
 [submodule "freeink-sdk"]
 	path = freeink-sdk
 	url = https://github.com/Free-Ink/freeink-sdk.git
+[submodule "tamalib"]
+	path = tamalib
+	url = https://github.com/jcrona/tamalib.git

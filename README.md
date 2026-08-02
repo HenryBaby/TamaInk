@@ -26,8 +26,27 @@ proven independently before later work is allowed to depend on it.
 | E-ink refresh modes | UC8253 full validated; UC8253 half/fast and UC8279d differential validation in progress |
 | Physical buttons | Validated on a UC8253 X3 |
 | microSD, RTC, and battery | microSD read-only validated on a UC8253 X3; RTC and battery gate in progress (not hardware validated) |
-| Tamagotchi P1 emulation | Not started |
+| Tamagotchi P1 emulation | Device serial path plus UC8253 X3 sampled LCD rendering integrated; hardware validation pending |
+| ROM validation (read-only packed P1 loading) | Device `/rom.bin` streaming validation integrated; hardware validation pending |
 | Persistent storage diagnostic | In progress (two-generation recovery gate) |
+
+The first rendering increment is build-integrated but hardware-pending. On the
+X3, it maps the 32x16 LCD counterclockwise into a centered portrait footprint:
+16x scale, 256x512 pixels at origin (268,8), producing an upright 512x256 view
+when the device buttons are at the bottom. In y-down coordinates, logical
+(column,row) maps to physical (row,31-column); the renderer also retains an
+explicit unrotated mode for host tests. The current P1 icon layout draws
+project-owned monochrome glyphs within 48x48 extents in the physical
+single physical row below the LCD (x=540 on the 792px X3 panel; tops at
+y=464,400,336,272,208,144,80,16 for bits 0 through 7). Inactive icons show
+only their glyph; active icons add four open corner brackets around the 48px
+extent. Hardware confirms the semantic order and rotated top/bottom mapping:
+Feed, Light, Play, Medicine, Clean, Meter, Discipline, Attention. The new
+single-row placement still requires its hardware validation gate.
+UC8279d and other controllers
+keep the serial emulator active with rendering disabled. The renderer performs
+one initial full refresh, then UC8253 fast refreshes no more often than once per
+second; no periodic cleaning refresh is enabled in this increment.
 
 The complete requirements, safety contract, and delivery gates are documented
 in [SCOPE.md](SCOPE.md).
@@ -77,6 +96,8 @@ tracked in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 ## ROM policy
 
 TamaInk does not include, distribute, download, or generate Tamagotchi ROMs.
+Optional local real-ROM integration testing is deferred; host CI uses synthetic
+buffers only and never requires or exposes a ROM file.
 
 When ROM support is implemented, users will supply their own compatible P1
 `rom.bin` on the microSD card. TamaInk will treat that file as read-only and
@@ -132,7 +153,37 @@ Stable releases will begin only after installation recovery, display variants,
 input, emulation, persistence, timekeeping, and long-duration behavior have all
 been validated on physical hardware.
 
+The host-tested portable emulator state codec is a bounded, versioned snapshot
+format with a live TamaLib bridge. Host builds apply the reviewed patch in
+`patches/tamalib-live-state.patch` to the pinned TamaLib revision before
+compiling the live bridge. The repository gitlink remains pinned; CI
+intentionally leaves the build worktree patched and dirty. The
+patch exposes complete CPU/TamaLib continuation state for deterministic
+save/resume tests using synthetic ROM buffers only. This is host evidence,
+not hardware validation.
+
+The live X3 gate scans `/.tamaink/state-a.bin` and `state-b.bin` after ROM
+validation, validates both the outer record and nested 694-byte emulator codec
+against a domain-separated `TINK` + CRC32 identity, and resumes the newest
+valid generation. Autosave runs every 15 minutes with a 60-second retry
+backoff; `a` requests the same staged transaction immediately. LCD frame dumps
+are disabled by default; `l` toggles them
+and prints at most one current frame when enabled. Serial writes are manual:
+`p` begins export to the inactive
+slot; repeated `n` advances
+partial/remainder/sync/verify/CRC-commit phases; `c` corrupts the newest slot
+for fallback testing; and `x` removes only the owned state files. Reset may be
+requested between phases. Hardware validation remains pending.
+
 ## Contributing
+
+The `w` command is an explicit wake diagnostic: when the emulator, SD, and
+persistence are idle it performs the same durable save, then stops rendering,
+waits for release, and deep-sleeps armed only for the confirmed GPIO3 power
+button. ADC button ladders cannot identify individual wake buttons; DS3231
+alarm wake is unavailable/unknown, and no timer or automatic sleep is used.
+Wake cause and GPIO status are logged at boot. Hardware validation remains
+pending; USB reset or power cycle is the recovery path.
 
 TamaInk is currently organized around narrow, reviewable milestones. Before
 starting a change:

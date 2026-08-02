@@ -10,7 +10,8 @@ constexpr std::uint8_t kFormatVersion = 1;
 constexpr std::uint32_t kCompatibilityId = 0x54494E4Bu;
 constexpr std::size_t kRomIdentitySize = 8;
 constexpr std::size_t kHeaderSize = 40;
-constexpr std::size_t kMaxPayload = 256;
+// Sized for the canonical emulator blob (694 bytes) plus future headroom.
+constexpr std::size_t kMaxPayload = 768;
 constexpr std::size_t kCrcOffset = 36;
 constexpr std::size_t kCrcSize = 4;
 

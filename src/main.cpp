@@ -8,8 +8,21 @@
 #include <BatteryMonitor.h>
 #include <Wire.h>
 #include <esp_system.h>
+#include <esp_sleep.h>
 #include <cstring>
+#include <new>
 #include "tamaink_persistence.h"
+#include "tamaink_rom.h"
+#include "tamaink_tamalib.h"
+#include "tamaink_renderer.h"
+#include "tamaink_emulator_state.h"
+#include "tamaink_autosave.h"
+#include "tamaink_wake_diagnostic.h"
+#include <PowerManager.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
 
 #ifndef TAMAINK_VERSION
 #define TAMAINK_VERSION "unknown"
@@ -20,9 +33,217 @@ namespace {
 constexpr uint8_t BUTTON_COUNT = InputManager::BTN_POWER + 1;
 constexpr unsigned long INPUT_REPOLL_MS = 6;
 constexpr unsigned long HOLD_REPORT_INTERVAL_MS = 1000;
+constexpr unsigned long EMULATOR_SERIAL_FRAME_INTERVAL_MS = 250;
 
 InputManager inputManager;
 bool inputReady = false;
+bool emulatorActive = false;
+tamaink::tamalib::Adapter emulator;
+std::uint16_t* emulatorProgram = nullptr;
+tamaink::tamalib::Snapshot emulatorSnapshot{};
+tamaink::tamalib::Snapshot emulatorPrinted{};
+bool emulatorPrintedValid = false;
+tamaink::tamalib::Snapshot emulatorObserved{};
+bool emulatorObservedValid = false;
+bool serialFramePending = false;
+bool serialLcdFramesEnabled = false;
+tamaink::autosave::Controller autosaveController{};
+constexpr uint32_t AUTOSAVE_INTERVAL_MS = 15UL * 60UL * 1000UL;
+constexpr uint32_t AUTOSAVE_RETRY_MS = 60UL * 1000UL;
+bool rendererFramePending = false;
+unsigned long emulatorLastPrintAt = 0;
+EInkDisplay* rendererDisplay = nullptr;
+QueueHandle_t rendererQueue = nullptr;
+TaskHandle_t rendererTaskHandle = nullptr;
+SemaphoreHandle_t rendererStopped = nullptr;
+bool rendererEnabled = false;
+bool rendererBegun = false;
+volatile bool rendererStopRequested = false;
+tamaink::wake::Coordinator wakeDiagnostic;
+bool initializeX3SharedSpi();
+void scanPersistence();
+bool readPersistenceSlot(uint8_t slot, tamaink::persist::Record& out);
+bool payloadMatches(const tamaink::persist::Record& r);
+extern bool persistenceHasSelected;
+extern uint8_t persistenceSlot;
+extern uint32_t persistenceGeneration;
+extern bool persistenceIdentityReady;
+extern uint8_t kPersistRom[8];
+extern tamaink::persist::Record persistenceBootRecord[2];
+extern tamaink::emulator::State persistenceBootState;
+extern uint8_t persistenceCandidate[tamaink::persist::kHeaderSize + tamaink::persist::kMaxPayload];
+
+void rendererTask(void*) {
+  tamaink::tamalib::Snapshot frame{};
+  bool first = true;
+  unsigned long lastRefresh = 0;
+  for (;;) {
+    if (xQueueReceive(rendererQueue, &frame, pdMS_TO_TICKS(20)) != pdTRUE) {
+      if (rendererStopRequested) break;
+      continue;
+    }
+    while (rendererDisplay->refreshBusy()) vTaskDelay(pdMS_TO_TICKS(20));
+    const unsigned long now = millis();
+    if (!first && now - lastRefresh < 1000) vTaskDelay(pdMS_TO_TICKS(1000 - (now - lastRefresh)));
+    tamaink::tamalib::Snapshot newest{};
+    while (xQueueReceive(rendererQueue, &newest, 0) == pdTRUE) frame = newest;
+    const auto status = tamaink::render::snapshot(frame, rendererDisplay->getFrameBuffer(),
+        rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
+        rendererDisplay->getDisplayWidthBytes(), 268, 8, 16, tamaink::render::Rotation::CounterClockwise90,
+        tamaink::render::IconLayout::P1BottomRow);
+    if (status != tamaink::render::Status::Ok) { Serial.println("Display renderer: frame geometry rejected"); continue; }
+    rendererDisplay->displayBuffer(first ? EInkDisplay::FULL_REFRESH : EInkDisplay::FAST_REFRESH, false);
+    if (first) {
+      while (rendererDisplay->refreshBusy()) vTaskDelay(pdMS_TO_TICKS(20));
+      rendererDisplay->skipInitialResync();
+    }
+    lastRefresh = millis(); first = false;
+    if (rendererStopRequested) break;
+    vTaskDelay(1);
+  }
+  if (rendererStopped) xSemaphoreGive(rendererStopped);
+  vTaskSuspend(nullptr);
+}
+
+void stopRenderer() {
+  rendererStopRequested = true;
+  if (rendererTaskHandle && rendererStopped) {
+    if (xSemaphoreTake(rendererStopped, portMAX_DELAY) == pdTRUE) {
+      vTaskDelete(rendererTaskHandle);
+      rendererTaskHandle = nullptr;
+    }
+  }
+  if (rendererStopped) { vSemaphoreDelete(rendererStopped); rendererStopped = nullptr; }
+  if (rendererQueue) { vQueueDelete(rendererQueue); rendererQueue = nullptr; }
+  if (rendererDisplay) { rendererDisplay->releaseBuffers(); if (rendererBegun) rendererDisplay->deepSleep(); delete rendererDisplay; rendererDisplay = nullptr; }
+  rendererBegun = false;
+  rendererEnabled = false;
+}
+
+bool startRenderer() {
+  if (BoardConfig::ACTIVE.displayController != BoardConfig::DisplayController::UC8253) {
+    Serial.println("Display rendering disabled: controller is not UC8253; serial emulator remains active");
+    return false;
+  }
+  const auto& p = BoardConfig::ACTIVE.display;
+  rendererDisplay = new (std::nothrow) EInkDisplay(p.sclk, p.mosi, p.cs, p.dc, p.rst, p.busy);
+  if (!rendererDisplay) { Serial.println("Display renderer: EInkDisplay allocation failed"); return false; }
+  rendererDisplay->setDisplayX3();
+  rendererStopRequested = false;
+  if (!initializeX3SharedSpi()) { delete rendererDisplay; rendererDisplay = nullptr; return false; }
+  rendererDisplay->begin();
+  rendererBegun = true;
+  if (!rendererDisplay->framebufferReady()) { Serial.println("Display renderer: framebuffer allocation failed"); stopRenderer(); return false; }
+  rendererQueue = xQueueCreate(1, sizeof(tamaink::tamalib::Snapshot));
+  if (!rendererQueue) { Serial.println("Display renderer: queue allocation failed"); stopRenderer(); return false; }
+  rendererStopped = xSemaphoreCreateBinary();
+  if (!rendererStopped) { Serial.println("Display renderer: completion semaphore allocation failed"); stopRenderer(); return false; }
+  if (xTaskCreate(rendererTask, "tama-render", 4096, nullptr, 1, &rendererTaskHandle) != pdPASS) {
+    Serial.println("Display renderer: task allocation failed"); stopRenderer(); return false;
+  }
+  rendererEnabled = true;
+  Serial.println("Display renderer: UC8253 X3 active (16x scale, centered CCW portrait; P1 order confirmed; bottom-row layout validation pending)");
+  return true;
+}
+
+struct RomFileSource { FsFile* file; };
+bool romSize(void* context, size_t* size) {
+  if (!context || !size) return false;
+  auto* source = static_cast<RomFileSource*>(context);
+  *size = static_cast<size_t>(source->file->size());
+  return true;
+}
+const char* romStatusName(tamaink::rom::Status status) {
+  switch (status) {
+    case tamaink::rom::Status::MissingSource: return "missing source";
+    case tamaink::rom::Status::SizeFailure: return "size read failure";
+    case tamaink::rom::Status::SizeMismatch: return "wrong size";
+    case tamaink::rom::Status::ReadError: return "read failure";
+    case tamaink::rom::Status::AllocationFailure: return "allocation failure";
+    case tamaink::rom::Status::InvalidEncoding: return "invalid encoding";
+    default: return "invalid ROM";
+  }
+}
+size_t romRead(void* context, size_t offset, uint8_t* destination, size_t capacity) {
+  if (!context || !destination) return 0;
+  auto* source = static_cast<RomFileSource*>(context);
+  if (!source->file->seek(offset)) return 0;
+  const int got = source->file->read(destination, capacity);
+  return got < 0 ? 0 : static_cast<size_t>(got);
+}
+void printEmulatorSnapshot(const tamaink::tamalib::Snapshot& s) {
+  Serial.println("EMU LCD:");
+  for (unsigned row = 0; row < 16; ++row) {
+    for (unsigned col = 0; col < 32; ++col) Serial.print((s.lcd[row] & (1u << col)) ? '#' : '.');
+    Serial.println();
+  }
+  Serial.printf("EMU ICONS: 0x%02X\n", s.icons);
+}
+void updateEmulatorInput() {
+  inputManager.update();
+  const uint8_t physical[3] = {InputManager::BTN_BACK, InputManager::BTN_CONFIRM, InputManager::BTN_POWER};
+  const char labels[3] = {'A', 'B', 'C'};
+  for (unsigned i = 0; i < 3; ++i) {
+    if (inputManager.wasPressed(physical[i])) {
+      const auto status = emulator.set_button(static_cast<tamaink::tamalib::Button>(i), true);
+      Serial.printf("EMU INPUT: %c pressed%s\n", labels[i],
+                    status == tamaink::tamalib::Status::Ok ? "" : " (adapter error)");
+    }
+    if (inputManager.wasReleased(physical[i])) {
+      const auto status = emulator.set_button(static_cast<tamaink::tamalib::Button>(i), false);
+      Serial.printf("EMU INPUT: %c released%s\n", labels[i],
+                    status == tamaink::tamalib::Status::Ok ? "" : " (adapter error)");
+    }
+  }
+}
+bool startEmulator() {
+  FsFile file = SdMan.open("/rom.bin", O_RDONLY);
+  if (!file) { Serial.println("Emulator: ROM missing (/rom.bin)"); return false; }
+  RomFileSource source{&file};
+  tamaink::rom::ReadOnlySource reader{&source, romSize, romRead};
+  struct Alloc { static uint16_t* alloc(void*, size_t n) { return new (std::nothrow) uint16_t[n]; }
+    static void free(void*, uint16_t* p) { delete[] p; } };
+  tamaink::rom::Allocator allocator{nullptr, Alloc::alloc, Alloc::free};
+  tamaink::rom::Validation validation{};
+  tamaink::rom::Status status = tamaink::rom::load(&reader, &allocator, &emulatorProgram, &validation);
+  file.close();
+  if (status != tamaink::rom::Status::Ok) { Serial.printf("Emulator: ROM validation failed: %s\n", romStatusName(status)); return false; }
+  if (validation.classification != tamaink::rom::Classification::SupportedP1) {
+    Serial.println("Emulator: ROM unsupported P1 variant"); delete[] emulatorProgram; emulatorProgram = nullptr; return false;
+  }
+  // Stable identity is derived solely from validated ROM CRC; ROM bytes remain read-only.
+  kPersistRom[0] = 'T'; kPersistRom[1] = 'I'; kPersistRom[2] = 'N'; kPersistRom[3] = 'K';
+  for (unsigned i = 0; i < 4; ++i) kPersistRom[4 + i] = static_cast<uint8_t>(validation.crc32 >> (8 * i));
+  persistenceIdentityReady = true;
+  const auto init = emulator.init(emulatorProgram, tamaink::tamalib::kProgramWords, &emulatorSnapshot);
+  if (init != tamaink::tamalib::Status::Ok) { Serial.printf("Emulator: init failed (%u)\n", static_cast<unsigned>(init)); delete[] emulatorProgram; emulatorProgram = nullptr; return false; }
+  scanPersistence();
+  bool resumed = false;
+  if (persistenceHasSelected) {
+    const uint8_t first = persistenceSlot;
+    const uint8_t order[2] = {first, static_cast<uint8_t>(1 - first)};
+    for (uint8_t oi = 0; oi < 2 && !resumed; ++oi) {
+      const uint8_t slot = order[oi];
+      if (!readPersistenceSlot(slot, persistenceBootRecord[slot])) { Serial.printf("Persistence: slot %c rejected on read\n", 'A' + slot); continue; }
+      if (!payloadMatches(persistenceBootRecord[slot])) { Serial.printf("Persistence: slot %c rejected (nested state)\n", 'A' + slot); continue; }
+      if (tamaink::emulator::decode(persistenceBootRecord[slot].payload, persistenceBootRecord[slot].payloadLength, kPersistRom, &persistenceBootState) != tamaink::emulator::DecodeError::None) continue;
+      if (emulator.import_state(persistenceBootState) != tamaink::tamalib::Status::Ok || emulator.snapshot(&emulatorSnapshot) != tamaink::tamalib::Status::Ok) {
+        Serial.printf("Persistence: slot %c rejected (import/snapshot)\n", 'A' + slot); continue;
+      }
+      persistenceSlot = slot; persistenceGeneration = persistenceBootRecord[slot].generation; resumed = true;
+      Serial.printf("Persistence: resumed generation=%lu from slot %c\n", static_cast<unsigned long>(persistenceGeneration), 'A' + slot);
+    }
+  }
+  if (!resumed) Serial.println("Persistence: no importable state; starting fresh");
+  Serial.println("Commands: a autosave-now; l toggle LCD frames; p manual-save; n next-phase; w save+deep-sleep wake diagnostic; c corrupt-newest; x cleanup-owned-state");
+  autosaveController.arm(millis(), AUTOSAVE_INTERVAL_MS);
+  emulatorActive = true;
+  Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; display refresh bypassed");
+  printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
+  emulatorObserved = emulatorSnapshot; emulatorObservedValid = true;
+  serialFramePending = false; rendererFramePending = false; emulatorLastPrintAt = millis();
+  return true;
+}
 bool persistenceReady = false;
 enum class PersistenceState : uint8_t { Idle, Open, Partial, Complete, Synced, Verified, AwaitReset };
 PersistenceState persistenceState = PersistenceState::Idle;
@@ -35,12 +256,16 @@ uint8_t persistenceRecord[ tamaink::persist::kHeaderSize + tamaink::persist::kMa
 uint8_t persistenceExpected[ tamaink::persist::kHeaderSize + tamaink::persist::kMaxPayload ]{};
 size_t persistenceRecordSize = 0;
 FsFile persistenceFile;
-constexpr char kPersistDir[] = "/.tamaink-test";
+constexpr char kPersistDir[] = "/.tamaink";
 constexpr const char* kPersistPaths[] = {
-    "/.tamaink-test/persist-a.bin",
-    "/.tamaink-test/persist-b.bin",
+    "/.tamaink/state-a.bin",
+    "/.tamaink/state-b.bin",
 };
-const uint8_t kPersistRom[8] = {'T','A','M','A','X','3','0','1'};
+uint8_t kPersistRom[8] = {};
+bool persistenceIdentityReady = false;
+tamaink::persist::Record persistenceBootRecord[2]{};
+tamaink::emulator::State persistenceBootState{};
+uint8_t persistenceCandidate[tamaink::persist::kHeaderSize + tamaink::persist::kMaxPayload]{};
 uint8_t lastInputState = 0;
 unsigned long pressStartedAt[BUTTON_COUNT] = {};
 unsigned long lastHoldReportAt[BUTTON_COUNT] = {};
@@ -418,7 +643,7 @@ void runStorageDiagnostic() {
   constexpr size_t sentinelLength = sizeof(sentinelContents) - 1;
   char contents[sentinelLength] = {};
   Serial.printf("SD diagnostic: read-only checks; sentinel=%s\n", sentinelPath);
-  if (!SdMan.begin()) {
+  if (!SdMan.ready() && !SdMan.begin()) {
     Serial.println("SD diagnostic: mount failed");
     return;
   }
@@ -464,13 +689,12 @@ bool readPersistenceSlot(uint8_t slot, tamaink::persist::Record& out) {
   size_t total = 0;
   while (total < static_cast<size_t>(size)) { const int n = f.read(persistenceRecord + total, static_cast<size_t>(size) - total); if (n <= 0) { f.close(); return false; } total += static_cast<size_t>(n); }
   f.close();
-  return tamaink::persist::decode(persistenceRecord, static_cast<size_t>(size), kPersistRom, out) == tamaink::persist::DecodeError::None;
+  return persistenceIdentityReady && tamaink::persist::decode(persistenceRecord, static_cast<size_t>(size), kPersistRom, out) == tamaink::persist::DecodeError::None;
 }
 
 bool payloadMatches(const tamaink::persist::Record& r) {
-  if (r.payloadLength != 8) return false;
-  for (uint8_t i = 0; i < 8; ++i) if (r.payload[i] != static_cast<uint8_t>(r.generation + i)) return false;
-  return true;
+  if (r.payloadLength != tamaink::emulator::kEncodedSize) return false;
+  return tamaink::emulator::decode(r.payload, r.payloadLength, kPersistRom, &persistenceBootState) == tamaink::emulator::DecodeError::None;
 }
 
 bool verifyStagedSlot(uint8_t slot) {
@@ -479,40 +703,102 @@ bool verifyStagedSlot(uint8_t slot) {
   size_t total = 0; while (total < static_cast<size_t>(size)) { const int n = f.read(persistenceRecord + total, static_cast<size_t>(size) - total); if (n <= 0) { f.close(); return false; } total += static_cast<size_t>(n); } f.close();
   if (!tamaink::persist::verifyStagedRecord(persistenceRecord, static_cast<size_t>(size),
                                              persistenceExpected, persistenceRecordSize)) return false;
-  uint8_t candidate[sizeof persistenceRecord]; std::memcpy(candidate, persistenceRecord, size);
-  if (!tamaink::persist::commitStagedRecord(candidate, static_cast<size_t>(size),
+  std::memcpy(persistenceCandidate, persistenceRecord, size);
+  if (!tamaink::persist::commitStagedRecord(persistenceCandidate, static_cast<size_t>(size),
                                              persistenceExpected, persistenceRecordSize)) return false;
-  tamaink::persist::Record check{};
-  return tamaink::persist::decode(candidate, static_cast<size_t>(size), kPersistRom, check) == tamaink::persist::DecodeError::None && payloadMatches(check);
+  if (tamaink::persist::decode(persistenceCandidate, static_cast<size_t>(size), kPersistRom, persistenceBootRecord[0]) != tamaink::persist::DecodeError::None) return false;
+  return payloadMatches(persistenceBootRecord[0]);
 }
 
 void scanPersistence() {
   if (!SdMan.ready()) { persistenceReady = false; Serial.println("Persistence: SD unavailable; commands refused"); return; }
-  persistenceReady = true; tamaink::persist::Record rec[2]{}; bool valid[2]{};
-  for (uint8_t i = 0; i < 2; ++i) { valid[i] = readPersistenceSlot(i, rec[i]) && payloadMatches(rec[i]); Serial.printf("Persistence slot %c: %s\n", 'A' + i, valid[i] ? "valid" : "invalid/missing"); }
-  const int newest = tamaink::persist::selectNewest(&rec[0], valid[0], &rec[1], valid[1]);
+  persistenceReady = true; bool valid[2]{};
+  for (uint8_t i = 0; i < 2; ++i) { valid[i] = readPersistenceSlot(i, persistenceBootRecord[i]) && payloadMatches(persistenceBootRecord[i]); Serial.printf("Persistence slot %c: %s\n", 'A' + i, valid[i] ? "valid" : "invalid/missing"); }
+  const int newest = tamaink::persist::selectNewest(&persistenceBootRecord[0], valid[0], &persistenceBootRecord[1], valid[1]);
   persistenceHasSelected = newest >= 0;
   if (newest < 0) { persistenceSlot = 0; persistenceGeneration = 0; }
-  if (newest >= 0) { persistenceSlot = static_cast<uint8_t>(newest); persistenceGeneration = rec[newest].generation; Serial.printf("Persistence selected slot %c generation=%lu\n", 'A' + newest, static_cast<unsigned long>(persistenceGeneration)); }
+  if (newest >= 0) { persistenceSlot = static_cast<uint8_t>(newest); persistenceGeneration = persistenceBootRecord[newest].generation; Serial.printf("Persistence selected slot %c generation=%lu\n", 'A' + newest, static_cast<unsigned long>(persistenceGeneration)); }
 }
 
-void failPersistenceWrite(const char* why) { if (persistenceFile) persistenceFile.close(); persistenceState = PersistenceState::Idle; Serial.printf("Persistence transaction failed: %s; rescanning\n", why); scanPersistence(); }
+void failPersistenceWrite(const char* why) { if (persistenceFile) persistenceFile.close(); persistenceState = PersistenceState::Idle; wakeDiagnostic.saveFailed(); autosaveController.writeFailure(millis(), AUTOSAVE_RETRY_MS); if (wakeDiagnostic.requested) Serial.println("Wake diagnostic canceled: save failed"); wakeDiagnostic.requested = false; Serial.printf("Persistence transaction failed: %s; rescanning\n", why); scanPersistence(); }
 
-void persistenceCommand(char c) {
+void enterWakeDiagnosticSleep() {
+  Serial.println("Wake diagnostic: save verified; preparing deep sleep");
+  Serial.flush();
+  const auto& input = BoardConfig::ACTIVE.input;
+  const int8_t powerPin = input.power;
+  const bool activeHigh = input.powerActiveHigh;
+  bool released = powerPin < 0;
+  if (powerPin >= 0) {
+    pinMode(powerPin, activeHigh ? INPUT_PULLDOWN : INPUT_PULLUP);
+    const int pressedLevel = activeHigh ? HIGH : LOW;
+    const unsigned long started = millis();
+    while (digitalRead(powerPin) == pressedLevel && millis() - started < 3000UL) delay(20);
+    released = digitalRead(powerPin) != pressedLevel;
+  }
+  if (!released) {
+    wakeDiagnostic.armFailed();
+    wakeDiagnostic.requested = false;
+    Serial.println("Wake diagnostic canceled: power-button release timeout");
+    if (emulatorActive && !rendererEnabled) {
+      if (startRenderer()) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
+    }
+    return;
+  }
+  if (!freeink::PowerManager::armPowerButtonWakeup()) {
+    wakeDiagnostic.armFailed();
+    wakeDiagnostic.requested = false;
+    Serial.println("Wake diagnostic canceled: power-button wake arm failed");
+    return;
+  }
+  stopRenderer();
+  freeink::PowerManager::powerDownRailsForSleep();
+  Serial.println("Wake diagnostic: armed GPIO3 power-button wake; entering deep sleep");
+  Serial.flush();
+  freeink::PowerManager::deepSleep();
+}
+
+void cancelWakeDiagnosticSave() {
+  if (wakeDiagnostic.pending) {
+    wakeDiagnostic.saveFailed();
+    if (wakeDiagnostic.requested) Serial.println("Wake diagnostic canceled: save failed");
+    wakeDiagnostic.requested = false;
+  }
+}
+
+const char* wakeupCauseName(esp_sleep_wakeup_cause_t cause) {
+  switch (cause) {
+    case ESP_SLEEP_WAKEUP_UNDEFINED: return "undefined";
+    case ESP_SLEEP_WAKEUP_EXT0: return "ext0";
+    case ESP_SLEEP_WAKEUP_EXT1: return "ext1";
+    case ESP_SLEEP_WAKEUP_TIMER: return "timer";
+    case ESP_SLEEP_WAKEUP_TOUCHPAD: return "touchpad";
+    case ESP_SLEEP_WAKEUP_ULP: return "ulp";
+    case ESP_SLEEP_WAKEUP_GPIO: return "gpio";
+    default: return "other";
+  }
+}
+
+void persistenceCommand(char c, bool internal = false) {
   if (c != 'p' && c != 'n' && c != 'c' && c != 'x') return;
+  if (!wakeDiagnostic.mutationAllowed(internal)) { Serial.println("Persistence command refused: wake diagnostic save pending"); return; }
+  if (!internal && !autosaveController.manualAllowed(persistenceState == PersistenceState::AwaitReset)) { Serial.println(persistenceState == PersistenceState::AwaitReset ? "Persistence command refused: await physical reset" : "Persistence command refused: automatic save in progress"); return; }
+  if (!emulatorActive) { Serial.println("Persistence command refused: emulator inactive"); return; }
   if (!persistenceReady) { Serial.println("Persistence command refused: SD unavailable"); return; }
   if (persistenceState == PersistenceState::AwaitReset) { Serial.println("Persistence command refused: await physical reset"); return; }
   if (c == 'p') {
     if (persistenceState != PersistenceState::Idle) return;
-    if (!SdMan.ensureDirectoryExists(kPersistDir)) { Serial.println("Persistence p refused: directory create failed"); return; }
+    if (!SdMan.ensureDirectoryExists(kPersistDir)) { cancelWakeDiagnosticSave(); Serial.println("Persistence p refused: directory create failed"); return; }
     const uint8_t target = persistenceHasSelected ? static_cast<uint8_t>(1 - persistenceSlot) : 0;
     const uint32_t next = persistenceHasSelected ? persistenceGeneration + 1u : 0u;
-    tamaink::persist::Record r{}; std::memcpy(r.rom, kPersistRom, 8); r.generation = next; r.timestamp = millis(); r.payloadLength = 8;
-    for (uint8_t i = 0; i < 8; ++i) r.payload[i] = static_cast<uint8_t>(next + i);
+    tamaink::persist::Record& r = persistenceBootRecord[0]; r = {}; std::memcpy(r.rom, kPersistRom, 8); r.generation = next; r.timestamp = millis();
+    if (emulator.export_state(&persistenceBootState) != tamaink::tamalib::Status::Ok) { cancelWakeDiagnosticSave(); Serial.println("Persistence p refused: live export failed"); return; }
+    r.payloadLength = tamaink::emulator::encode(persistenceBootState, r.payload, sizeof r.payload, kPersistRom);
+    if (r.payloadLength != tamaink::emulator::kEncodedSize) { cancelWakeDiagnosticSave(); Serial.println("Persistence p refused: state encode failed"); return; }
     persistenceRecordSize = tamaink::persist::encode(r, persistenceRecord, sizeof persistenceRecord);
-    if (persistenceRecordSize == 0) { Serial.println("Persistence p refused: encode failed"); return; }
+    if (persistenceRecordSize == 0) { cancelWakeDiagnosticSave(); Serial.println("Persistence p refused: encode failed"); return; }
     std::memcpy(persistenceExpected, persistenceRecord, persistenceRecordSize);
-    if (!tamaink::persist::stageEncodedRecord(persistenceRecord, persistenceRecordSize)) { Serial.println("Persistence p refused: staging failed"); return; }
+    if (!tamaink::persist::stageEncodedRecord(persistenceRecord, persistenceRecordSize)) { cancelWakeDiagnosticSave(); Serial.println("Persistence p refused: staging failed"); return; }
     persistencePendingSlot = target; persistencePendingGeneration = next;
     persistenceFile = SdMan.open(kPersistPaths[target], O_RDWR | O_CREAT | O_TRUNC);
     if (!persistenceFile) { failPersistenceWrite("open"); return; }
@@ -522,16 +808,16 @@ void persistenceCommand(char c) {
   if (c == 'n') {
     if (persistenceState == PersistenceState::Idle) return;
     const size_t partial = tamaink::persist::kHeaderSize / 2;
-    if (persistenceState == PersistenceState::Open) { if (persistenceFile.write(persistenceRecord, partial) != partial) { failPersistenceWrite("partial write"); return; } persistenceState = PersistenceState::Partial; Serial.println("Persistence Partial complete; reset now or send n"); }
-    else if (persistenceState == PersistenceState::Partial) { const size_t rem = persistenceRecordSize - partial; if (persistenceFile.write(persistenceRecord + partial, rem) != rem) { failPersistenceWrite("remainder write"); return; } persistenceState = PersistenceState::Complete; Serial.println("Persistence CompleteUnsynced; reset now or send n"); }
-    else if (persistenceState == PersistenceState::Complete) { if (!persistenceFile.sync()) { failPersistenceWrite("sync"); return; } persistenceState = PersistenceState::Synced; Serial.println("Persistence Synced; reset now or send n"); }
-    else if (persistenceState == PersistenceState::Synced) { persistenceFile.close(); if (!verifyStagedSlot(persistencePendingSlot)) { failPersistenceWrite("staged validation"); return; } persistenceState = PersistenceState::Verified; Serial.println("Persistence Verified staged; reset now or send n to commit"); }
-    else if (persistenceState == PersistenceState::Verified) { persistenceFile = SdMan.open(kPersistPaths[persistencePendingSlot], O_RDWR); if (!persistenceFile || !persistenceFile.seek(tamaink::persist::kCrcOffset) || persistenceFile.write(persistenceExpected + tamaink::persist::kCrcOffset, tamaink::persist::kCrcSize) != tamaink::persist::kCrcSize || !persistenceFile.sync()) { failPersistenceWrite("commit"); return; } persistenceFile.close(); persistenceSlot = persistencePendingSlot; persistenceGeneration = persistencePendingGeneration; persistenceHasSelected = true; persistenceState = PersistenceState::Idle; Serial.println("Persistence commit complete"); }
+    if (persistenceState == PersistenceState::Open) { if (persistenceFile.write(persistenceRecord, partial) != partial) { failPersistenceWrite("partial write"); return; } persistenceState = PersistenceState::Partial; Serial.println(internal ? "Autosave phase: partial" : "Persistence Partial complete; reset now or send n"); }
+    else if (persistenceState == PersistenceState::Partial) { const size_t rem = persistenceRecordSize - partial; if (persistenceFile.write(persistenceRecord + partial, rem) != rem) { failPersistenceWrite("remainder write"); return; } persistenceState = PersistenceState::Complete; Serial.println(internal ? "Autosave phase: complete" : "Persistence CompleteUnsynced; reset now or send n"); }
+    else if (persistenceState == PersistenceState::Complete) { if (!persistenceFile.sync()) { failPersistenceWrite("sync"); return; } persistenceState = PersistenceState::Synced; Serial.println(internal ? "Autosave phase: synced" : "Persistence Synced; reset now or send n"); }
+    else if (persistenceState == PersistenceState::Synced) { persistenceFile.close(); if (!verifyStagedSlot(persistencePendingSlot)) { failPersistenceWrite("staged validation"); return; } persistenceState = PersistenceState::Verified; Serial.println(internal ? "Autosave phase: verified" : "Persistence Verified staged; reset now or send n to commit"); }
+    else if (persistenceState == PersistenceState::Verified) { persistenceFile = SdMan.open(kPersistPaths[persistencePendingSlot], O_RDWR); if (!persistenceFile || !persistenceFile.seek(tamaink::persist::kCrcOffset) || persistenceFile.write(persistenceExpected + tamaink::persist::kCrcOffset, tamaink::persist::kCrcSize) != tamaink::persist::kCrcSize || !persistenceFile.sync()) { failPersistenceWrite("commit"); return; } persistenceFile.close(); if (!readPersistenceSlot(persistencePendingSlot, persistenceBootRecord[0]) || !payloadMatches(persistenceBootRecord[0]) || persistenceBootRecord[0].generation != persistencePendingGeneration) { Serial.println("Persistence commit rejected: reread validation failed; prior slot retained"); persistenceState = PersistenceState::Idle; wakeDiagnostic.saveFailed(); if (wakeDiagnostic.requested) Serial.println("Wake diagnostic canceled: save failed"); wakeDiagnostic.requested = false; autosaveController.commitRereadFailure(millis(), AUTOSAVE_RETRY_MS); scanPersistence(); return; } persistenceSlot = persistencePendingSlot; persistenceGeneration = persistencePendingGeneration; persistenceHasSelected = true; persistenceState = PersistenceState::Idle; autosaveController.successCommit(millis(), AUTOSAVE_INTERVAL_MS); Serial.println("Persistence commit complete and verified"); if (wakeDiagnostic.saveSucceeded()) { wakeDiagnostic.requested = false; enterWakeDiagnosticSleep(); } }
     return;
   }
   if (persistenceState != PersistenceState::Idle) return;
   if (c == 'c') {
-    tamaink::persist::Record newest{}, older{}; if (!persistenceHasSelected || !readPersistenceSlot(persistenceSlot, newest) || !payloadMatches(newest) || !readPersistenceSlot(static_cast<uint8_t>(1 - persistenceSlot), older) || !payloadMatches(older) || !tamaink::persist::generationNewer(newest.generation, older.generation)) { Serial.println("Persistence c refused: need newest plus older valid slots"); return; }
+    if (!persistenceHasSelected || !readPersistenceSlot(persistenceSlot, persistenceBootRecord[0]) || !payloadMatches(persistenceBootRecord[0]) || !readPersistenceSlot(static_cast<uint8_t>(1 - persistenceSlot), persistenceBootRecord[1]) || !payloadMatches(persistenceBootRecord[1]) || !tamaink::persist::generationNewer(persistenceBootRecord[0].generation, persistenceBootRecord[1].generation)) { Serial.println("Persistence c refused: need newest plus older valid slots"); return; }
     FsFile f = SdMan.open(kPersistPaths[persistenceSlot], O_RDWR);
     uint8_t b = 0;
     const bool ioOk = f && f.seek(tamaink::persist::kHeaderSize) && f.read(&b, 1) == 1 &&
@@ -541,7 +827,31 @@ void persistenceCommand(char c) {
     if (f.write(&b, 1) != 1 || !f.sync()) { f.close(); Serial.println("Persistence c failed"); return; }
     f.close(); persistenceState = PersistenceState::AwaitReset; Serial.println("Persistence newest corrupted; await physical reset"); return;
   }
-  if (c == 'x') { const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]); const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]); if (!a || !b) { Serial.println("Persistence cleanup failed"); scanPersistence(); return; } if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir); persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0; Serial.println("Persistence owned files cleaned"); }
+  if (c == 'x') { const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]); const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]); if (!a || !b) { Serial.println("Persistence cleanup failed"); scanPersistence(); return; } if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir); persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0; autosaveController.cleanup(millis(), AUTOSAVE_INTERVAL_MS); Serial.println("Persistence owned files cleaned"); }
+}
+
+void dispatchSerialCommand(char c) {
+  if (c == 'w') {
+    if (!wakeDiagnostic.request(emulatorActive, persistenceReady, persistenceState == PersistenceState::Idle, autosaveController.automatic, persistenceState == PersistenceState::AwaitReset)) { Serial.println("Wake diagnostic refused: emulator/SD busy, await reset, or request pending"); return; }
+    tamaink::autosave::request(autosaveController.scheduler); Serial.println("Wake diagnostic requested: durable save will begin"); return;
+  }
+  if (c == 'a') {
+    if (wakeDiagnostic.pending) { Serial.println("Autosave request refused: wake diagnostic save pending"); return; }
+    if (persistenceState != PersistenceState::Idle || autosaveController.automatic) { Serial.println("Autosave request refused: transaction busy"); return; }
+    tamaink::autosave::request(autosaveController.scheduler); Serial.println("Autosave requested"); return;
+  }
+  if (c == 'l') {
+    serialLcdFramesEnabled = !serialLcdFramesEnabled;
+    if (serialLcdFramesEnabled) {
+      serialFramePending = emulatorActive;
+      emulatorLastPrintAt = millis() - EMULATOR_SERIAL_FRAME_INTERVAL_MS;
+    } else {
+      serialFramePending = false;
+    }
+    Serial.printf("Serial LCD frames: %s\n", serialLcdFramesEnabled ? "enabled" : "disabled");
+    return;
+  }
+  persistenceCommand(c);
 }
 
 }  // namespace
@@ -553,6 +863,11 @@ void setup() {
   const esp_reset_reason_t resetReason = esp_reset_reason();
   Serial.printf("TamaInk %s\n", TAMAINK_VERSION);
   Serial.printf("Reset reason: %s (%d)\n", resetReasonName(resetReason), static_cast<int>(resetReason));
+  const esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
+  Serial.printf("Wakeup cause: %s (%d)\n", wakeupCauseName(wakeCause), static_cast<int>(wakeCause));
+  if (wakeCause == ESP_SLEEP_WAKEUP_GPIO) {
+    Serial.printf("GPIO wake status: 0x%llX\n", static_cast<unsigned long long>(esp_sleep_get_gpio_wakeup_status()));
+  }
 
   uint8_t detectionScore1 = 0;
   uint8_t detectionScore2 = 0;
@@ -565,6 +880,14 @@ void setup() {
     runX3RtcBatteryDiagnostic();
     freeink::applyXteinkDisplayController();
     Serial.printf("Display controller: %s\n", displayControllerName(BoardConfig::ACTIVE.displayController));
+
+    if (!SdMan.begin()) {
+      Serial.println("Emulator: SD mount failed; continuing hardware diagnostics");
+    } else if (startEmulator()) {
+      beginInputDiagnostic();
+      if (startRenderer()) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
+      return;
+    }
 
     const auto& pins = BoardConfig::ACTIVE.display;
     static EInkDisplay display(pins.sclk, pins.mosi, pins.cs, pins.dc, pins.rst, pins.busy);
@@ -608,7 +931,7 @@ void setup() {
     Serial.println("Display test phase 3/3 complete; panel sleeping.");
     runStorageDiagnostic();
     scanPersistence();
-    Serial.println("Persistence diagnostic is write-capable (owned paths only): p=start, n=next phase, c=corrupt newest, x=cleanup");
+    Serial.println("Persistence gate: p=begin live save, n=advance phase (repeat), c=corrupt newest, x=cleanup owned state paths");
     beginInputDiagnostic();
   } else {
     Serial.println("Board detection stopped; display pins untouched.");
@@ -616,7 +939,41 @@ void setup() {
 }
 
 void loop() {
+  if (emulatorActive) {
+    updateEmulatorInput();
+    while (Serial.available()) dispatchSerialCommand(static_cast<char>(Serial.read()));
+    const uint32_t nowAuto = millis();
+    if (autosaveController.tick(nowAuto, persistenceState == PersistenceState::Idle, persistenceState == PersistenceState::AwaitReset) == tamaink::autosave::Action::Begin) {
+      Serial.println("Autosave: starting staged transaction");
+      persistenceCommand('p', true);
+      if (persistenceState == PersistenceState::Idle) autosaveController.beginFailure(nowAuto, AUTOSAVE_RETRY_MS);
+    } else if (autosaveController.advance(persistenceState == PersistenceState::Idle) == tamaink::autosave::Action::Advance) {
+      persistenceCommand('n', true);
+    }
+    emulator.step(64, &emulatorSnapshot);
+    const bool lcdChanged = !emulatorObservedValid ||
+        std::memcmp(emulatorSnapshot.lcd, emulatorObserved.lcd, sizeof emulatorSnapshot.lcd) != 0;
+    const bool iconChanged = !emulatorObservedValid || emulatorSnapshot.icons != emulatorObserved.icons;
+    if (lcdChanged || iconChanged) {
+      emulatorObserved = emulatorSnapshot;
+      emulatorObservedValid = true;
+      serialFramePending = serialLcdFramesEnabled;
+      if (lcdChanged || iconChanged) rendererFramePending = true;
+    }
+    const unsigned long now = millis();
+    if (serialLcdFramesEnabled && serialFramePending && now - emulatorLastPrintAt >= EMULATOR_SERIAL_FRAME_INTERVAL_MS) {
+      printEmulatorSnapshot(emulatorSnapshot);
+      emulatorPrinted = emulatorSnapshot;
+      emulatorPrintedValid = true;
+      serialFramePending = false;
+      emulatorLastPrintAt = now;
+    }
+    if (rendererEnabled && rendererFramePending && xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+      rendererFramePending = false;
+    delay(0);
+    return;
+  }
   if (inputReady) updateInputDiagnostic();
-  while (Serial.available()) persistenceCommand(static_cast<char>(Serial.read()));
+  while (Serial.available()) dispatchSerialCommand(static_cast<char>(Serial.read()));
   delay(10);
 }
