@@ -18,6 +18,7 @@
 #include "tamaink_emulator_state.h"
 #include "tamaink_autosave.h"
 #include "tamaink_wake_diagnostic.h"
+#include "tamaink_sleep_gesture.h"
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -60,6 +61,8 @@ bool rendererEnabled = false;
 bool rendererBegun = false;
 volatile bool rendererStopRequested = false;
 tamaink::wake::Coordinator wakeDiagnostic;
+tamaink::sleep_gesture::Controller sleepGesture;
+void dispatchSerialCommand(char c);
 bool initializeX3SharedSpi();
 void scanPersistence();
 bool readPersistenceSlot(uint8_t slot, tamaink::persist::Record& out);
@@ -195,6 +198,15 @@ void updateEmulatorInput() {
                     status == tamaink::tamalib::Status::Ok ? "" : " (adapter error)");
     }
   }
+  const auto gestureEvent = sleepGesture.update(
+      static_cast<uint32_t>(millis()), inputManager.isPressed(InputManager::BTN_BACK),
+      inputManager.isPressed(InputManager::BTN_POWER));
+  if (gestureEvent == tamaink::sleep_gesture::Controller::Event::Cancelled) {
+    Serial.println("Wake diagnostic gesture canceled: BACK+POWER chord released before 2000 ms");
+  } else if (gestureEvent == tamaink::sleep_gesture::Controller::Event::Trigger) {
+    Serial.println("Wake diagnostic gesture released: requesting durable save");
+    dispatchSerialCommand('w');
+  }
 }
 bool startEmulator() {
   FsFile file = SdMan.open("/rom.bin", O_RDONLY);
@@ -238,7 +250,7 @@ bool startEmulator() {
   Serial.println("Commands: a autosave-now; l toggle LCD frames; p manual-save; n next-phase; w save+deep-sleep wake diagnostic; c corrupt-newest; x cleanup-owned-state");
   autosaveController.arm(millis(), AUTOSAVE_INTERVAL_MS);
   emulatorActive = true;
-  Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; display refresh bypassed");
+  Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; hold BACK+POWER >=2000 ms, then release for wake diagnostic; display refresh bypassed");
   printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
   emulatorObserved = emulatorSnapshot; emulatorObservedValid = true;
   serialFramePending = false; rendererFramePending = false; emulatorLastPrintAt = millis();

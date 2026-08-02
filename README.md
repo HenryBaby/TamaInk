@@ -182,8 +182,15 @@ persistence are idle it performs the same durable save, then stops rendering,
 waits for release, and deep-sleeps armed only for the confirmed GPIO3 power
 button. ADC button ladders cannot identify individual wake buttons; DS3231
 alarm wake is unavailable/unknown, and no timer or automatic sleep is used.
-Wake cause and GPIO status are logged at boot. Hardware validation remains
-pending; USB reset or power cycle is the recovery path.
+Wake cause and GPIO status are logged at boot; the serial GPIO3 wake path has
+been hardware validated. USB reset or power cycle is the recovery path.
+
+The same flow can be requested without serial: hold the physical `BACK` and
+`POWER` buttons together continuously for at least 2000 ms, then release both.
+A short or broken chord is canceled, and one hold/release produces at most one
+request. Normal individual BACK/CONFIRM/POWER press and release events remain
+mapped to emulator A/B/C input.
+Physical gesture hardware validation remains pending.
 
 TamaInk is currently organized around narrow, reviewable milestones. Before
 starting a change:
