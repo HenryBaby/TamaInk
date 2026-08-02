@@ -6,10 +6,14 @@ namespace tamaink::render {
 Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
                std::size_t capacity, std::uint16_t width, std::uint16_t height,
                std::size_t stride, std::int32_t originX, std::int32_t originY,
-               std::uint16_t scale, Rotation rotation) {
+               std::uint16_t scale, Rotation rotation, IconLayout iconLayout) {
   if (!destination || !width || !height || !scale || stride < (static_cast<std::size_t>(width) + 7u) / 8u)
     return Status::InvalidArgument;
   if (rotation != Rotation::None && rotation != Rotation::CounterClockwise90)
+    return Status::InvalidArgument;
+  if (iconLayout != IconLayout::None && iconLayout != IconLayout::P1Margins)
+    return Status::InvalidArgument;
+  if (iconLayout == IconLayout::P1Margins && rotation != Rotation::CounterClockwise90)
     return Status::InvalidArgument;
   if (height > std::numeric_limits<std::size_t>::max() / stride) return Status::Overflow;
   const std::size_t bytes = stride * height;
@@ -38,6 +42,59 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
         for (std::int64_t x = cx0; x < cx1; ++x)
           destination[static_cast<std::size_t>(y) * stride + static_cast<std::size_t>(x) / 8u] &=
               static_cast<std::uint8_t>(~(0x80u >> (static_cast<unsigned>(x) & 7u)));
+    }
+  }
+  if (iconLayout == IconLayout::P1Margins) {
+    const std::int64_t markerSide = scale;
+    const std::int64_t markerStep = scale * 2ll;
+    const std::int64_t markerTotal = markerSide * 8ll + markerStep * 7ll;
+    const std::int64_t markerY = static_cast<std::int64_t>(originY) +
+        (footprintHeight - markerTotal) / 2ll;
+    const std::int64_t markerX[2] = {
+      static_cast<std::int64_t>(originX) - markerSide - scale,
+      right + scale
+    };
+    auto pixel = [&](std::int64_t x, std::int64_t y, bool black) {
+      if (x < 0 || y < 0 || x >= width || y >= height) return;
+      auto& byte = destination[static_cast<std::size_t>(y) * stride + static_cast<std::size_t>(x) / 8u];
+      const std::uint8_t mask = static_cast<std::uint8_t>(0x80u >> (static_cast<unsigned>(x) & 7u));
+      if (black) byte &= static_cast<std::uint8_t>(~mask); else byte |= mask;
+    };
+    // Small original monochrome glyphs, expressed as 5x5 bitmaps rather than
+    // copied device artwork. Bit order follows TamaLib/P1 menu semantics:
+    // Feed, Light, Play, Medicine, Clean, Meter, Discipline, Attention.
+    // Under CCW rotation, original top/bottom row order appears bottom-to-top.
+    static constexpr std::uint8_t glyphs[8][5] = {
+      {0x04, 0x0E, 0x15, 0x04, 0x04}, {0x04, 0x0E, 0x1F, 0x0E, 0x04},
+      {0x10, 0x18, 0x1C, 0x18, 0x10}, {0x04, 0x0E, 0x15, 0x04, 0x0E},
+      {0x11, 0x0A, 0x04, 0x0A, 0x11}, {0x0E, 0x11, 0x15, 0x11, 0x0E},
+      {0x1F, 0x11, 0x0A, 0x04, 0x04}, {0x04, 0x0E, 0x04, 0x00, 0x04}
+    };
+    for (unsigned row = 0; row < 4; ++row) {
+      const std::int64_t y0 = markerY + static_cast<std::int64_t>(row) * markerStep;
+      for (unsigned side = 0; side < 2; ++side) {
+        const std::int64_t x0 = markerX[side];
+        const unsigned iconBit = side * 4u + (3u - row);
+        const bool active = (source.icons & (1u << iconBit)) != 0;
+        for (std::int64_t y = 0; y < markerSide; ++y)
+          for (std::int64_t x = 0; x < markerSide; ++x) {
+            const bool edge = (x == 0 || y == 0 || x + 1 == markerSide || y + 1 == markerSide);
+            if (edge) pixel(x0 + x, y0 + y, true);
+          }
+        if (active) {
+          // Keep a clear gap from the 1px marker outline: on X3 this derives
+          // a 2px glyph cell (10x10 glyph centered in the 16x16 marker).
+          const std::int64_t cell = markerSide / 8ll > 0 ? markerSide / 8ll : 1ll;
+          const std::int64_t glyphOriginX = x0 + (markerSide - cell * 5ll) / 2ll;
+          const std::int64_t glyphOriginY = y0 + (markerSide - cell * 5ll) / 2ll;
+          for (unsigned gy = 0; gy < 5; ++gy)
+            for (unsigned gx = 0; gx < 5; ++gx)
+              if ((glyphs[iconBit][gy] & (1u << (4u - gx))) != 0)
+                for (std::int64_t py = 0; py < cell; ++py)
+                  for (std::int64_t px = 0; px < cell; ++px)
+                    pixel(glyphOriginX + gx * cell + px, glyphOriginY + gy * cell + py, true);
+        }
+      }
     }
   }
   return Status::Ok;

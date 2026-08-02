@@ -62,7 +62,8 @@ void rendererTask(void*) {
     while (xQueueReceive(rendererQueue, &newest, 0) == pdTRUE) frame = newest;
     const auto status = tamaink::render::snapshot(frame, rendererDisplay->getFrameBuffer(),
         rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
-        rendererDisplay->getDisplayWidthBytes(), 268, 8, 16, tamaink::render::Rotation::CounterClockwise90);
+        rendererDisplay->getDisplayWidthBytes(), 268, 8, 16, tamaink::render::Rotation::CounterClockwise90,
+        tamaink::render::IconLayout::P1Margins);
     if (status != tamaink::render::Status::Ok) { Serial.println("Display renderer: frame geometry rejected"); continue; }
     rendererDisplay->displayBuffer(first ? EInkDisplay::FULL_REFRESH : EInkDisplay::FAST_REFRESH, false);
     if (first) {
@@ -101,7 +102,7 @@ bool startRenderer() {
     Serial.println("Display renderer: task allocation failed"); stopRenderer(); return false;
   }
   rendererEnabled = true;
-  Serial.println("Display renderer: UC8253 X3 active (16x scale, centered CCW portrait; icons omitted)");
+  Serial.println("Display renderer: UC8253 X3 active (16x scale, centered CCW portrait; P1 icons in margins; semantic mapping inferred; hardware validation pending)");
   return true;
 }
 
@@ -790,7 +791,7 @@ void loop() {
       emulatorObserved = emulatorSnapshot;
       emulatorObservedValid = true;
       serialFramePending = true;
-      if (lcdChanged) rendererFramePending = true;
+      if (lcdChanged || iconChanged) rendererFramePending = true;
     }
     const unsigned long now = millis();
     if (serialFramePending && now - emulatorLastPrintAt >= EMULATOR_SERIAL_FRAME_INTERVAL_MS) {

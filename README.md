@@ -35,8 +35,13 @@ X3, it maps the 32x16 LCD counterclockwise into a centered portrait footprint:
 16x scale, 256x512 pixels at origin (268,8), producing an upright 512x256 view
 when the device buttons are at the bottom. In y-down coordinates, logical
 (column,row) maps to physical (row,31-column); the renderer also retains an
-explicit unrotated mode for host tests. Icons are deliberately omitted until
-placement semantics are proven. UC8279d and other controllers
+explicit unrotated mode for host tests. The current P1 icon layout draws
+small project-owned monochrome glyphs in outlined 16x16 markers in the physical
+left and right margins (bits 0-3 left, bits 4-7 right; within each margin,
+bit order runs bottom-to-top under the CCW rotation). The semantic mapping is
+inferred from TamaLib bit order plus the documented P1 menu order: Feed, Light,
+Play, Medicine, Clean, Meter, Discipline, Attention. This mapping and icon
+placement still require the hardware validation gate. UC8279d and other controllers
 keep the serial emulator active with rendering disabled. The renderer performs
 one initial full refresh, then UC8253 fast refreshes no more often than once per
 second; no periodic cleaning refresh is enabled in this increment.
