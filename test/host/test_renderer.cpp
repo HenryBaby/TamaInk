@@ -141,7 +141,7 @@ int main() {
   };
   assert(physicalBlack(441, 7));   // anchor and top edge
   assert(physicalBlack(444, 10));  // filled interior at 50%
-  assert(!physicalBlack(450, 10));
+  assert(!physicalBlack(447, 10));
   // Text starts 3px beside the 15px battery and shares its vertical center.
   assert(physicalBlack(459, 9));
   assert(physicalBlack(483, 9));   // percent glyph upper dot
