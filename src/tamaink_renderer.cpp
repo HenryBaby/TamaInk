@@ -45,11 +45,9 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     }
   }
   if (iconLayout == IconLayout::P1Margins) {
-    const std::int64_t markerSide = scale;
-    const std::int64_t markerStep = scale * 2ll;
-    const std::int64_t markerTotal = markerSide * 4ll + markerStep * 3ll;
-    const std::int64_t markerY = static_cast<std::int64_t>(originY) +
-        (footprintHeight - markerTotal) / 2ll;
+    const std::int64_t markerSide = scale * 3ll;
+    const std::int64_t markerStep = footprintHeight / 4ll;
+    const std::int64_t markerY = static_cast<std::int64_t>(originY);
     const std::int64_t markerX[2] = {
       static_cast<std::int64_t>(originX) - markerSide - scale,
       right + scale
@@ -71,20 +69,15 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
       {0x1F, 0x11, 0x0A, 0x04, 0x04}, {0x04, 0x0E, 0x04, 0x00, 0x04}
     };
     for (unsigned row = 0; row < 4; ++row) {
-      const std::int64_t y0 = markerY + static_cast<std::int64_t>(row) * markerStep;
+      const std::int64_t y0 = markerY + static_cast<std::int64_t>(row) * markerStep +
+          (markerStep - markerSide) / 2ll;
       for (unsigned side = 0; side < 2; ++side) {
         const std::int64_t x0 = markerX[side];
         const unsigned iconBit = side * 4u + (3u - row);
         const bool active = (source.icons & (1u << iconBit)) != 0;
-        for (std::int64_t y = 0; y < markerSide; ++y)
-          for (std::int64_t x = 0; x < markerSide; ++x) {
-            const bool edge = (x == 0 || y == 0 || x + 1 == markerSide || y + 1 == markerSide);
-            if (edge) pixel(x0 + x, y0 + y, true);
-          }
-        if (active) {
-          // Keep a clear gap from the 1px marker outline: on X3 this derives
-          // a 2px glyph cell (10x10 glyph centered in the 16x16 marker).
-          const std::int64_t cell = markerSide / 8ll > 0 ? markerSide / 8ll : 1ll;
+        // Keep the symbol visible in both states; active adds four short,
+        // open corner brackets rather than a placeholder box.
+        const std::int64_t cell = markerSide / 8ll > 0 ? markerSide / 8ll : 1ll;
           const std::int64_t glyphOriginX = x0 + (markerSide - cell * 5ll) / 2ll;
           const std::int64_t glyphOriginY = y0 + (markerSide - cell * 5ll) / 2ll;
           for (unsigned gy = 0; gy < 5; ++gy)
@@ -93,6 +86,17 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
                 for (std::int64_t py = 0; py < cell; ++py)
                   for (std::int64_t px = 0; px < cell; ++px)
                     pixel(glyphOriginX + gx * cell + px, glyphOriginY + gy * cell + py, true);
+        if (active) {
+          constexpr std::int64_t inset = 3, length = 6;
+          for (std::int64_t i = 0; i < length; ++i) {
+            pixel(x0 + inset + i, y0 + inset, true); pixel(x0 + inset, y0 + inset + i, true);
+            pixel(x0 + markerSide - inset - 1 - i, y0 + inset, true);
+            pixel(x0 + markerSide - inset - 1, y0 + inset + i, true);
+            pixel(x0 + inset + i, y0 + markerSide - inset - 1, true);
+            pixel(x0 + inset, y0 + markerSide - inset - 1 - i, true);
+            pixel(x0 + markerSide - inset - 1 - i, y0 + markerSide - inset - 1, true);
+            pixel(x0 + markerSide - inset - 1, y0 + markerSide - inset - 1 - i, true);
+          }
         }
       }
     }
