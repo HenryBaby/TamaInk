@@ -26,14 +26,18 @@ ROM data.
 
 ## Supported platform
 
-The initial target is the ESP32-C3-based Xteink X3 with:
+The initial release target is an unlocked ESP32-C3-based Xteink X3 with:
 
 - 792x528 monochrome e-ink display;
 - physical ADC-ladder buttons;
 - microSD storage;
 - DS3231 real-time clock;
 - BQ27220 battery gauge; and
-- either the UC8253 or UC8279d display controller.
+- the physically validated UC8253 display controller.
+
+UC8279d units are detected, but their display path remains disabled until it
+has been physically validated. Broad X3 support must not be claimed on the
+basis of controller detection alone.
 
 Initial releases support only X3 units that can be detected and reflashed
 directly over USB. USB-locked devices are unsupported until installation,
@@ -50,19 +54,23 @@ underneath it.
 - **TamaInk code** owns the application lifecycle, ROM validation, rendering,
   persistence, power policy, and user experience.
 
-FreeInk dependencies will be pinned to reviewed commits. Updates must be
+FreeInk dependencies are pinned to reviewed commits. Updates must be
 deliberate and must pass the applicable hardware tests before the pin changes.
 
-Expected FreeInk components are:
+The current firmware uses these FreeInk components:
 
 - `BoardConfig`;
 - `XteinkDetect`;
-- `FreeInkDisplay`;
+- `EInkDisplay`;
 - `InputManager`;
 - `SDCardManager`;
-- `Rtc`;
-- `BatteryMonitor`; and
-- `PowerManager`.
+- `BatteryMonitor`;
+- `PowerManager`; and
+- `FreeInkUI`.
+
+The DS3231 is accessed through the Arduino Wire API so the firmware can read it
+without applying FreeInk's mutating RTC initialization. SdFat provides the
+microSD filesystem used for the read-only ROM and TamaInk-owned save state.
 
 Reader, book, network, web-server, theme, font, image-decoding, localization,
 and general UI components will not be included unless a later requirement
@@ -104,10 +112,11 @@ Installation should use an OTA-aware flasher that writes the inactive slot,
 verifies the image, and changes the boot selection only after a successful
 write.
 
-Before emulator work is considered safe for general device testing, a physical
-X3 must complete repeated CrossPoint -> TamaInk -> CrossPoint round trips. The
-bootloader and partition-table contents must remain unchanged, and interrupted
-installation tests must leave the previously active application bootable.
+Release qualification requires repeated CrossPoint -> TamaInk -> CrossPoint
+round trips on physical hardware. This recovery path has been repeatedly
+validated on the UC8253 development device. Any new controller variant, device
+revision, or installation method must repeat the qualification; interrupted
+inactive-slot writes must leave the previously active application bootable.
 
 ## Functional requirements
 
@@ -154,13 +163,18 @@ timing remain authoritative; the display presents a sampled view of that state.
 ### Time and power
 
 - Preserve Tamagotchi time correctly across ordinary resets and sleep.
-- Do not treat wall-clock adjustment as equivalent to executing skipped
-  emulator cycles without behavioral proof.
-- Begin with the simplest correct always-running power model.
-- Add checkpointed sleep or accelerated catch-up only after deterministic tests
-  demonstrate equivalence for relevant P1 behavior.
-- Validate whether RTC alarms and non-power buttons can wake the X3 before
-  depending on them.
+- Autosave periodically and complete a verified save before controlled sleep
+  or low-battery shutdown.
+- Use the explicit physical gesture for the normal on-device sleep path. The
+  serial development diagnostic may request the same verified-save flow;
+  automatic low-battery sleep may proceed only after a verified save. All
+  paths wake through the confirmed power-button path.
+- Use bounded RTC-based emulator execution after sleep rather than treating a
+  wall-clock adjustment as equivalent to skipped CPU execution.
+- Keep catch-up limits and failure outcomes explicit so boot cannot run
+  indefinitely.
+- Do not depend on RTC alarms or non-power-button wake without separate
+  hardware validation.
 
 ### Sound
 
@@ -191,8 +205,23 @@ Each gate must be reproducible before work depends on it:
     e-ink coupling.
 11. **Rendering integration:** Connect changed logical frames to the proven
     e-ink pipeline and tune refresh behavior.
-12. **Power behavior:** Add and validate final autosave, sleep, wake, low-battery,
-    and long-duration timekeeping behavior.
+12. **Power behavior:** Validate autosave, sleep, wake, low-battery, and
+    timekeeping across reset and sleep.
+
+## Release-candidate status
+
+The UC8253 development device has completed hardware checks for board and
+controller detection, display modes, physical input, microSD access, RTC and
+battery telemetry, P1 emulation, recoverable persistence, autosave, sleep/wake,
+bounded catch-up, low-battery protection, and repeated CrossPoint recovery.
+The host suite and GitHub Actions workflow also validate deterministic
+emulation, state codecs, renderer policy, and reproducible application-only
+firmware builds.
+
+Release-candidate preparation must complete clean-install, missing and corrupt
+file, documentation, provenance, licensing, and packaged-artifact checks.
+Until then, builds remain pre-release and support is limited to the physically
+validated UC8253 X3 configuration.
 
 ## Non-goals
 
@@ -250,7 +279,8 @@ An initial stable release requires evidence that:
 - all A/B/C input events are reliable;
 - a valid P1 ROM runs deterministically;
 - save/resume survives resets and simulated interrupted writes;
-- multi-day emulation keeps correct time and state;
+- emulation keeps correct time and state during normal operation and across
+  reset and sleep;
 - display ghosting and refresh latency remain acceptable;
 - low-battery and storage failures do not corrupt the last valid save; and
 - the release contains no ROM or full-flash image;

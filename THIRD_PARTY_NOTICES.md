@@ -4,14 +4,14 @@ This document tracks external material used by or materially informing TamaInk.
 It is an inventory aid and does not replace the complete license texts shipped
 with source and binary distributions.
 
-## Planned runtime dependencies
+## Runtime dependencies
 
 ### TamaLib
 
 - Project: <https://github.com/jcrona/tamalib>
 - Copyright: Jean-Christophe Rona and contributors
 - License: GNU General Public License, version 2 or later
-- Intended use: pinned source dependency providing first-generation Tamagotchi
+- Use: pinned source dependency providing first-generation Tamagotchi
   emulation
 - Distribution obligations: preserve notices and modification history; provide
   applicable license text and complete corresponding source with distributed
@@ -42,7 +42,7 @@ upstream GPL notices.
 - Project: <https://github.com/Free-Ink/freeink-sdk>
 - Copyright: FreeInk and contributors
 - License: MIT
-- Intended use: pinned source dependency providing Xteink X3 hardware support
+- Use: pinned source dependency providing Xteink X3 hardware support
 - Distribution obligations: preserve the MIT copyright and permission notice,
   FreeInk's `NOTICE`, and all applicable transitive notices
 
@@ -80,8 +80,8 @@ copyright notice and complete license are distributed in
 - Version: 2.3.1 (`cda057318bec196183d4cc92b01bc1dd64bbfb02`)
 - License: MIT
 - Use: pinned transitive runtime dependency of FreeInk SDK's `SDCardManager`,
-  providing FAT filesystem and SD-card access; TamaInk's current storage
-  diagnostic uses it only for read operations
+  providing FAT filesystem and SD-card access for the read-only user ROM and
+  TamaInk-owned recoverable save generations
 - Distribution obligations: preserve the upstream copyright and MIT permission
   notice with source and binary distributions
 
@@ -133,8 +133,9 @@ These tools run in GitHub Actions and are not linked into TamaInk firmware.
 - License: MIT at the pinned upstream revisions
 - Use: CI source checkout, Python setup, and application-image artifact upload
 
-The complete transitive build-tool and ESP32 platform inventory will be
-captured from the first successful CI build before a firmware release.
+The release-candidate audit must record the final resolved transitive
+build-tool and ESP32 platform inventory associated with the reproducible
+firmware artifact.
 
 ## User-supplied Tamagotchi ROM
 
