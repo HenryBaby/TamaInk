@@ -8,7 +8,7 @@ namespace tamaink::render {
 
 enum class Status : std::uint8_t { Ok, InvalidArgument, Overflow };
 enum class Rotation : std::uint8_t { None, CounterClockwise90 };
-enum class IconLayout : std::uint8_t { None, P1Margins };
+enum class IconLayout : std::uint8_t { None, P1BottomRow };
 
 // Renders the 32x16 Tama LCD into a caller-owned 1bpp, row-major,
 // MSB-first destination. The destination is cleared white; icon pixels are

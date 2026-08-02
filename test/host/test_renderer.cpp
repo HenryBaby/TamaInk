@@ -56,16 +56,16 @@ int main() {
   assert(tamaink::render::snapshot(s, clipped.data(), clipped.size(), 16, 32, 2, 0, 0, 1,
                                    static_cast<Rotation>(99)) == Status::InvalidArgument);
 
-  // P1 icon layout: X3 geometry places 48x48 icon extents at x=204/540,
-  // y=48+128*row, evenly spanning the portrait footprint.
+  // P1 bottom-row layout: all 48x48 extents are at x=540; bit0 top=464,
+  // bit7 top=16 (64px pitch), preserving perceived left-to-right order.
   constexpr unsigned x3Width = 792, x3Height = 528, x3Stride = 99;
   std::vector<std::uint8_t> icons(x3Stride * x3Height, 0xA5);
   tamaink::tamalib::Snapshot empty{};
   assert(tamaink::render::snapshot(empty, icons.data(), icons.size(), x3Width, x3Height, x3Stride,
                                    268, 8, 16, Rotation::CounterClockwise90,
-                                   IconLayout::P1Margins) == Status::Ok);
-  for (unsigned side = 0; side < 2; ++side) for (unsigned bit = 0; bit < 4; ++bit) {
-    const unsigned x0 = side == 0 ? 204 : 540, y0 = 48 + (3 - bit) * 128;
+                                   IconLayout::P1BottomRow) == Status::Ok);
+  for (unsigned bit = 0; bit < 8; ++bit) {
+    const unsigned x0 = 540, y0 = 16 + (7 - bit) * 64;
     assert(!black(icons, x3Stride, x0, y0));
     assert(!black(icons, x3Stride, x0 + 47, y0 + 47));
     bool glyphVisible = false;
@@ -80,9 +80,8 @@ int main() {
     std::vector<std::uint8_t> marked(x3Stride * x3Height, 0xA5);
     assert(tamaink::render::snapshot(oneIcon, marked.data(), marked.size(), x3Width, x3Height, x3Stride,
                                      268, 8, 16, Rotation::CounterClockwise90,
-                                     IconLayout::P1Margins) == Status::Ok);
-    const unsigned side = bit < 4 ? 0 : 1, row = 3u - (bit % 4u);
-    const unsigned x0 = side == 0 ? 204 : 540, y0 = 48 + row * 128;
+                                     IconLayout::P1BottomRow) == Status::Ok);
+    const unsigned x0 = 540, y0 = 16 + (7 - bit) * 64;
     // Active state retains its centered glyph and adds open corner brackets.
     static constexpr std::uint8_t glyphs[8][5] = {
       {0x04, 0x0E, 0x15, 0x04, 0x04}, {0x04, 0x0E, 0x1F, 0x0E, 0x04},
@@ -102,10 +101,10 @@ int main() {
       for (unsigned x = 268; x < 524; ++x) assert(!black(marked, x3Stride, x, y));
   }
   assert(tamaink::render::snapshot(empty, icons.data(), icons.size(), x3Width, x3Height, x3Stride,
-                                   268, 8, 16, Rotation::None, IconLayout::P1Margins) == Status::InvalidArgument);
+                                   268, 8, 16, Rotation::None, IconLayout::P1BottomRow) == Status::InvalidArgument);
   assert(tamaink::render::snapshot(empty, icons.data(), icons.size(), x3Width, x3Height, x3Stride,
                                    -1000, -1000, 16, Rotation::CounterClockwise90,
-                                   IconLayout::P1Margins) == Status::Ok);
+                                   IconLayout::P1BottomRow) == Status::Ok);
   assert(tamaink::render::snapshot(empty, icons.data(), icons.size(), x3Width, x3Height, x3Stride,
                                    268, 8, 16, Rotation::CounterClockwise90,
                                    static_cast<IconLayout>(99)) == Status::InvalidArgument);

@@ -11,9 +11,9 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     return Status::InvalidArgument;
   if (rotation != Rotation::None && rotation != Rotation::CounterClockwise90)
     return Status::InvalidArgument;
-  if (iconLayout != IconLayout::None && iconLayout != IconLayout::P1Margins)
+  if (iconLayout != IconLayout::None && iconLayout != IconLayout::P1BottomRow)
     return Status::InvalidArgument;
-  if (iconLayout == IconLayout::P1Margins && rotation != Rotation::CounterClockwise90)
+  if (iconLayout == IconLayout::P1BottomRow && rotation != Rotation::CounterClockwise90)
     return Status::InvalidArgument;
   if (height > std::numeric_limits<std::size_t>::max() / stride) return Status::Overflow;
   const std::size_t bytes = stride * height;
@@ -44,14 +44,11 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
               static_cast<std::uint8_t>(~(0x80u >> (static_cast<unsigned>(x) & 7u)));
     }
   }
-  if (iconLayout == IconLayout::P1Margins) {
+  if (iconLayout == IconLayout::P1BottomRow) {
     const std::int64_t markerSide = scale * 3ll;
-    const std::int64_t markerStep = footprintHeight / 4ll;
-    const std::int64_t markerY = static_cast<std::int64_t>(originY);
-    const std::int64_t markerX[2] = {
-      static_cast<std::int64_t>(originX) - markerSide - scale,
-      right + scale
-    };
+    const std::int64_t markerStep = scale * 4ll;
+    const std::int64_t markerY = static_cast<std::int64_t>(originY) + scale / 2ll;
+    const std::int64_t markerX = right + scale;
     auto pixel = [&](std::int64_t x, std::int64_t y, bool black) {
       if (x < 0 || y < 0 || x >= width || y >= height) return;
       auto& byte = destination[static_cast<std::size_t>(y) * stride + static_cast<std::size_t>(x) / 8u];
@@ -68,35 +65,32 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
       {0x11, 0x0A, 0x04, 0x0A, 0x11}, {0x0E, 0x11, 0x15, 0x11, 0x0E},
       {0x1F, 0x11, 0x0A, 0x04, 0x04}, {0x04, 0x0E, 0x04, 0x00, 0x04}
     };
-    for (unsigned row = 0; row < 4; ++row) {
-      const std::int64_t y0 = markerY + static_cast<std::int64_t>(row) * markerStep +
-          (markerStep - markerSide) / 2ll;
-      for (unsigned side = 0; side < 2; ++side) {
-        const std::int64_t x0 = markerX[side];
-        const unsigned iconBit = side * 4u + (3u - row);
-        const bool active = (source.icons & (1u << iconBit)) != 0;
-        // Keep the symbol visible in both states; active adds four short,
-        // open corner brackets rather than a placeholder box.
-        const std::int64_t cell = markerSide / 8ll > 0 ? markerSide / 8ll : 1ll;
-          const std::int64_t glyphOriginX = x0 + (markerSide - cell * 5ll) / 2ll;
-          const std::int64_t glyphOriginY = y0 + (markerSide - cell * 5ll) / 2ll;
-          for (unsigned gy = 0; gy < 5; ++gy)
-            for (unsigned gx = 0; gx < 5; ++gx)
-              if ((glyphs[iconBit][gy] & (1u << (4u - gx))) != 0)
-                for (std::int64_t py = 0; py < cell; ++py)
-                  for (std::int64_t px = 0; px < cell; ++px)
-                    pixel(glyphOriginX + gx * cell + px, glyphOriginY + gy * cell + py, true);
-        if (active) {
-          constexpr std::int64_t inset = 3, length = 6;
-          for (std::int64_t i = 0; i < length; ++i) {
-            pixel(x0 + inset + i, y0 + inset, true); pixel(x0 + inset, y0 + inset + i, true);
-            pixel(x0 + markerSide - inset - 1 - i, y0 + inset, true);
-            pixel(x0 + markerSide - inset - 1, y0 + inset + i, true);
-            pixel(x0 + inset + i, y0 + markerSide - inset - 1, true);
-            pixel(x0 + inset, y0 + markerSide - inset - 1 - i, true);
-            pixel(x0 + markerSide - inset - 1 - i, y0 + markerSide - inset - 1, true);
-            pixel(x0 + markerSide - inset - 1, y0 + markerSide - inset - 1 - i, true);
-          }
+    for (unsigned row = 0; row < 8; ++row) {
+      const std::int64_t y0 = markerY + static_cast<std::int64_t>(7u - row) * markerStep;
+      const std::int64_t x0 = markerX;
+      const unsigned iconBit = row;
+      const bool active = (source.icons & (1u << iconBit)) != 0;
+      // Keep the symbol visible in both states; active adds four short,
+      // open corner brackets rather than a placeholder box.
+      const std::int64_t cell = markerSide / 8ll > 0 ? markerSide / 8ll : 1ll;
+      const std::int64_t glyphOriginX = x0 + (markerSide - cell * 5ll) / 2ll;
+      const std::int64_t glyphOriginY = y0 + (markerSide - cell * 5ll) / 2ll;
+      for (unsigned gy = 0; gy < 5; ++gy)
+        for (unsigned gx = 0; gx < 5; ++gx)
+          if ((glyphs[iconBit][gy] & (1u << (4u - gx))) != 0)
+            for (std::int64_t py = 0; py < cell; ++py)
+              for (std::int64_t px = 0; px < cell; ++px)
+                pixel(glyphOriginX + gx * cell + px, glyphOriginY + gy * cell + py, true);
+      if (active) {
+        constexpr std::int64_t inset = 3, length = 6;
+        for (std::int64_t i = 0; i < length; ++i) {
+          pixel(x0 + inset + i, y0 + inset, true); pixel(x0 + inset, y0 + inset + i, true);
+          pixel(x0 + markerSide - inset - 1 - i, y0 + inset, true);
+          pixel(x0 + markerSide - inset - 1, y0 + inset + i, true);
+          pixel(x0 + inset + i, y0 + markerSide - inset - 1, true);
+          pixel(x0 + inset, y0 + markerSide - inset - 1 - i, true);
+          pixel(x0 + markerSide - inset - 1 - i, y0 + markerSide - inset - 1, true);
+          pixel(x0 + markerSide - inset - 1, y0 + markerSide - inset - 1 - i, true);
         }
       }
     }
