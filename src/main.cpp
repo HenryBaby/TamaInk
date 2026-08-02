@@ -54,6 +54,7 @@ bool readPersistenceSlot(uint8_t slot, tamaink::persist::Record& out);
 bool payloadMatches(const tamaink::persist::Record& r);
 extern bool persistenceHasSelected;
 extern uint8_t persistenceSlot;
+extern uint32_t persistenceGeneration;
 extern bool persistenceIdentityReady;
 extern uint8_t kPersistRom[8];
 extern tamaink::persist::Record persistenceBootRecord[2];
