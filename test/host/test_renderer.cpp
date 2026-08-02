@@ -136,19 +136,38 @@ int main() {
                                    tamaink::render::BatteryStatus{true, 50}) == Status::Ok);
   assert(black(statusBar, x3Stride, 31, 527)); // divider at physical y=31
   assert(black(statusBar, x3Stride, 31, 300)); // continuous through LCD native y
-  assert(black(statusBar, x3Stride, 8, 86));  // right-aligned battery top edge
-  assert(black(statusBar, x3Stride, 12, 84)); // 50% fill
-  assert(!black(statusBar, x3Stride, 20, 84));
+  const auto physicalBlack = [&](unsigned px, unsigned py) {
+    return black(statusBar, x3Stride, py, x3Height - 1u - px);
+  };
+  assert(physicalBlack(441, 7));   // anchor and top edge
+  assert(physicalBlack(444, 10));  // filled interior at 50%
+  assert(!physicalBlack(450, 10));
+  // Text starts 3px beside the 15px battery and shares its vertical center.
+  assert(physicalBlack(459, 9));
+  assert(physicalBlack(483, 9));   // percent glyph upper dot
+  assert(physicalBlack(487, 13));  // diagonal
+  assert(physicalBlack(489, 17));  // percent glyph lower dot
+  for (unsigned py = 0; py < 31; ++py)
+    for (unsigned px = 509; px < x3Height; ++px)
+      assert(!physicalBlack(px, py)); // status content leaves a right margin
+  std::fill(statusBar.begin(), statusBar.end(), 0xFF);
+  assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
+                                   268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
+                                   tamaink::render::BatteryStatus{true, 0}) == Status::Ok);
+  assert(!physicalBlack(444, 10)); // zero leaves the cavity empty
   std::fill(statusBar.begin(), statusBar.end(), 0xFF);
   assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
                                    268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
                                    tamaink::render::BatteryStatus{}) == Status::Ok);
-  assert(black(statusBar, x3Stride, 10, 32)); // unknown marker is rendered as --
+  assert(physicalBlack(463, 11)); // unknown marker starts beside battery
+  assert(physicalBlack(483, 9)); // percent remains recognizable when unknown
   std::fill(statusBar.begin(), statusBar.end(), 0xFF);
   assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
                                    268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
                                    tamaink::render::BatteryStatus{true, 100}) == Status::Ok);
-  assert(black(statusBar, x3Stride, 12, 84)); // 100% fills to the interior edge
+  assert(physicalBlack(444, 10)); // 100% fills the interior
+  assert(physicalBlack(463, 9));  // 100 text remains adjacent
+  assert(physicalBlack(503, 9));  // percent stays within physical width
   assert(!black(statusBar, x3Stride, 100, 500)); // content stays in bounds
   // Status graphics do not alter the pet LCD or bottom icon regions.
   assert(!black(statusBar, x3Stride, 300, 100));

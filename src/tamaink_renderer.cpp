@@ -113,33 +113,42 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     constexpr std::int64_t sy = 2, sx = 2;
     const std::int64_t dividerY = 31;
     for (std::int64_t x = 0; x < height; ++x) pixelPhysical(x, dividerY, true);
-    const std::int64_t iconW = 26, iconH = 14, iconX = 441, iconY = 8;
-    for (std::int64_t x = iconX; x < iconX + iconW; ++x) { pixelPhysical(x, iconY, true); pixelPhysical(x, iconY + iconH - 1, true); }
-    for (std::int64_t y = iconY; y < iconY + iconH; ++y) { pixelPhysical(iconX, y, true); pixelPhysical(iconX + iconW - 1, y, true); }
-    for (std::int64_t y = iconY + 4; y < iconY + 10; ++y) pixelPhysical(iconX + iconW, y, true);
+    // Compact 5x5 battery glyph on the same square-pixel grid as the text.
+    constexpr std::int64_t iconX = 441, iconY = 7, cell = 3, iconW = 15, iconH = 15;
+    static constexpr std::uint8_t batteryGlyph[5] = {0x1E, 0x12, 0x13, 0x12, 0x1E};
+    for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 5; ++gx)
+      if (batteryGlyph[gy] & (1u << (4u - gx)))
+        for (std::int64_t py = 0; py < cell; ++py) for (std::int64_t px = 0; px < cell; ++px)
+          pixelPhysical(iconX + gx * cell + px, iconY + gy * cell + py, true);
     if (battery.percentageKnown && battery.percentage <= 100) {
-      const std::int64_t fill = (iconW - 4) * battery.percentage / 100;
+      constexpr std::int64_t cavityWidth = 6;
+      const std::int64_t fill = cavityWidth * battery.percentage / 100;
       for (std::int64_t y = iconY + 3; y < iconY + iconH - 3; ++y)
-        for (std::int64_t x = iconX + 2; x < iconX + 2 + fill; ++x) pixelPhysical(x, y, true);
+        for (std::int64_t x = iconX + 3; x < iconX + 3 + fill; ++x) pixelPhysical(x, y, true);
     }
     unsigned value = battery.percentageKnown && battery.percentage <= 100 ? battery.percentage : 0;
     const unsigned tens = value / 10, ones = value % 10;
-    const std::int64_t textY = 8, percentX = 515;
+    const std::int64_t textY = 9, textStart = 459;
     auto glyph = [&](unsigned digit, std::int64_t x0) {
       for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 5; ++gx)
         if (digits[digit][gy] & (1u << (4u - gx)))
           for (std::int64_t py = 0; py < sy; ++py) for (std::int64_t px = 0; px < sx; ++px)
             pixelPhysical(x0 + gx * sx + px, textY + gy * sy + py, true);
     };
-    std::int64_t textX = percentX - 24;
+    unsigned digitCount = 2;
+    if (battery.percentageKnown && battery.percentage <= 100) digitCount = value < 10 ? 1 : (value < 100 ? 2 : 3);
+    const std::int64_t percentX = textStart + static_cast<std::int64_t>(digitCount) * 12;
+    std::int64_t textX = textStart;
     if (battery.percentageKnown && battery.percentage <= 100) {
-      if (value < 10) { textX = percentX - 12; glyph(ones, textX); }
-      else if (value < 100) { textX = percentX - 24; glyph(tens, textX); glyph(ones, textX + 12); }
-      else { textX = percentX - 36; glyph(1, textX); glyph(0, textX + 12); glyph(0, textX + 24); }
-    } else { textX = percentX - 24; glyph(10, textX); glyph(10, textX + 12); }
-    // Percent sign, kept pixel-small to fit the physical top-right corner.
-    pixelPhysical(percentX, textY + 1, true); pixelPhysical(percentX + 4, textY + 1, true);
-    pixelPhysical(percentX + 2, textY + 4, true); pixelPhysical(percentX, textY + 8, true); pixelPhysical(percentX + 4, textY + 8, true);
+      if (value < 10) glyph(ones, textX);
+      else if (value < 100) { glyph(tens, textX); glyph(ones, textX + 12); }
+      else { glyph(1, textX); glyph(0, textX + 12); glyph(0, textX + 24); }
+    } else { glyph(10, textX); glyph(10, textX + 12); }
+    static constexpr std::uint8_t percentGlyph[5] = {0x19, 0x19, 0x04, 0x13, 0x13};
+    for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 5; ++gx)
+      if (percentGlyph[gy] & (1u << (4u - gx)))
+        for (std::int64_t py = 0; py < sy; ++py) for (std::int64_t px = 0; px < sx; ++px)
+          pixelPhysical(percentX + gx * sx + px, textY + gy * sy + py, true);
   }
   return Status::Ok;
 }
