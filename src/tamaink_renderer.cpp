@@ -108,14 +108,19 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
       {7,5,5,5,7},{2,6,2,2,7},{7,1,7,4,7},{7,1,7,1,7},{5,5,7,1,1},
       {7,4,7,1,7},{7,4,7,5,7},{7,1,1,1,1},{7,5,7,5,7},{7,5,7,1,7},{0,0,7,0,0}
     };
-    constexpr std::int64_t sx = 8, sy = 8;
+    constexpr std::int64_t digitScale = 6;
     // Top status region is 64 physical pixels high; no divider is drawn.
     constexpr std::int64_t iconX = 344, iconY = 12, iconW = 72, iconH = 40;
-    for (std::int64_t x = iconX; x < iconX + iconW; ++x) {
-      pixelPhysical(x, iconY, true); pixelPhysical(x, iconY + iconH - 1, true);
-    }
-    for (std::int64_t y = iconY; y < iconY + iconH; ++y) {
-      pixelPhysical(iconX, y, true); pixelPhysical(iconX + iconW - 1, y, true);
+    constexpr std::int64_t border = 4;
+    for (std::int64_t t = 0; t < border; ++t) {
+      for (std::int64_t x = iconX; x < iconX + iconW; ++x) {
+        pixelPhysical(x, iconY + t, true);
+        pixelPhysical(x, iconY + iconH - 1 - t, true);
+      }
+      for (std::int64_t y = iconY; y < iconY + iconH; ++y) {
+        pixelPhysical(iconX + t, y, true);
+        pixelPhysical(iconX + iconW - 1 - t, y, true);
+      }
     }
     for (std::int64_t y = iconY + 16; y < iconY + 24; ++y)
       for (std::int64_t x = iconX + iconW; x < iconX + iconW + 8; ++x) pixelPhysical(x, y, true);
@@ -128,19 +133,20 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     }
     const unsigned value = battery.percentageKnown && battery.percentage <= 100 ? battery.percentage : 0;
     const unsigned tens = value / 10, ones = value % 10;
-    const std::int64_t textY = 12, textStart = 432;
+    const std::int64_t textY = 17, textStart = 432, digitPitch = 24;
     auto glyph = [&](unsigned digit, std::int64_t x0) {
       for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 3; ++gx)
         if (digits[digit][gy] & (1u << (2u - gx)))
-          for (std::int64_t py = 0; py < sy; ++py) for (std::int64_t px = 0; px < sx; ++px)
-            pixelPhysical(x0 + gx * sx + px, textY + gy * sy + py, true);
+          for (std::int64_t py = 0; py < digitScale; ++py)
+            for (std::int64_t px = 0; px < digitScale; ++px)
+              pixelPhysical(x0 + gx * digitScale + px, textY + gy * digitScale + py, true);
     };
     std::int64_t textX = textStart;
     if (battery.percentageKnown && battery.percentage <= 100) {
       if (value < 10) glyph(ones, textX);
-      else if (value < 100) { glyph(tens, textX); glyph(ones, textX + 32); }
-      else { glyph(1, textX); glyph(0, textX + 32); glyph(0, textX + 64); }
-    } else { glyph(10, textX); glyph(10, textX + 32); }
+      else if (value < 100) { glyph(tens, textX); glyph(ones, textX + digitPitch); }
+      else { glyph(1, textX); glyph(0, textX + digitPitch); glyph(0, textX + 2 * digitPitch); }
+    } else { glyph(10, textX); glyph(10, textX + digitPitch); }
   }
   return Status::Ok;
 }
