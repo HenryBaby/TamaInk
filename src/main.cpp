@@ -21,6 +21,7 @@
 #include "tamaink_sleep_gesture.h"
 #include "tamaink_sleep_screen.h"
 #include "tamaink_rtc_sleep_gate.h"
+#include "tamaink_wake_catchup_plan.h"
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -271,7 +272,21 @@ bool startEmulator() {
         const bool sv = tamaink::rtc::decodeTagged(persistenceBootRecord[slot].timestamp, saved);
         const bool cv = readRtcEpoch(nowRtc);
         std::uint64_t elapsedSeconds = 0;
-        if (sv && cv && tamaink::rtc::elapsed(saved, nowRtc, elapsedSeconds)) Serial.printf("Wake diagnostic: RTC elapsed %llu seconds; emulator catch-up not applied\n", static_cast<unsigned long long>(elapsedSeconds));
+        if (sv && cv && tamaink::rtc::elapsed(saved, nowRtc, elapsedSeconds)) {
+          const auto plan = tamaink::wake::makeCatchupPlan(
+              elapsedSeconds, persistenceBootState.virtual_timestamp,
+              persistenceBootState.tamalib_timestamp_frequency);
+          if (plan.available) {
+            Serial.printf("Wake catch-up plan: requested=%llu s planned=%lu s capped=%s targetTicks=%lu maxInstructions=%lu; emulator catch-up not applied\n",
+                          static_cast<unsigned long long>(plan.requestedSeconds),
+                          static_cast<unsigned long>(plan.plannedSeconds), plan.capped ? "yes" : "no",
+                          static_cast<unsigned long>(plan.targetVirtualTimestamp),
+                          static_cast<unsigned long>(plan.maxInstructionAttempts));
+          } else {
+            Serial.printf("Wake catch-up plan unavailable: requested=%llu s; emulator catch-up not applied\n",
+                          static_cast<unsigned long long>(elapsedSeconds));
+          }
+        }
         else if (sv && cv) Serial.println("Wake diagnostic: RTC moved backward; elapsed unavailable; emulator catch-up not applied");
         else Serial.println("Wake diagnostic: RTC saved/current timestamp unavailable or invalid; emulator catch-up not applied");
       }
