@@ -41,6 +41,7 @@ bool emulatorPrintedValid = false;
 tamaink::tamalib::Snapshot emulatorObserved{};
 bool emulatorObservedValid = false;
 bool serialFramePending = false;
+bool serialLcdFramesEnabled = false;
 bool rendererFramePending = false;
 unsigned long emulatorLastPrintAt = 0;
 EInkDisplay* rendererDisplay = nullptr;
@@ -207,7 +208,7 @@ bool startEmulator() {
     }
   }
   if (!resumed) Serial.println("Persistence: no importable state; starting fresh");
-  Serial.println("Persistence commands: p begin-save; n next-phase; c corrupt-newest; x cleanup-owned-state");
+  Serial.println("Commands: l toggle LCD frames; p begin-save; n next-phase; c corrupt-newest; x cleanup-owned-state");
   emulatorActive = true;
   Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; display refresh bypassed");
   printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
@@ -742,6 +743,21 @@ void persistenceCommand(char c) {
   if (c == 'x') { const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]); const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]); if (!a || !b) { Serial.println("Persistence cleanup failed"); scanPersistence(); return; } if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir); persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0; Serial.println("Persistence owned files cleaned"); }
 }
 
+void dispatchSerialCommand(char c) {
+  if (c == 'l') {
+    serialLcdFramesEnabled = !serialLcdFramesEnabled;
+    if (serialLcdFramesEnabled) {
+      serialFramePending = emulatorActive;
+      emulatorLastPrintAt = millis() - EMULATOR_SERIAL_FRAME_INTERVAL_MS;
+    } else {
+      serialFramePending = false;
+    }
+    Serial.printf("Serial LCD frames: %s\n", serialLcdFramesEnabled ? "enabled" : "disabled");
+    return;
+  }
+  persistenceCommand(c);
+}
+
 }  // namespace
 
 void setup() {
@@ -824,7 +840,7 @@ void setup() {
 void loop() {
   if (emulatorActive) {
     updateEmulatorInput();
-    while (Serial.available()) persistenceCommand(static_cast<char>(Serial.read()));
+    while (Serial.available()) dispatchSerialCommand(static_cast<char>(Serial.read()));
     emulator.step(64, &emulatorSnapshot);
     const bool lcdChanged = !emulatorObservedValid ||
         std::memcmp(emulatorSnapshot.lcd, emulatorObserved.lcd, sizeof emulatorSnapshot.lcd) != 0;
@@ -832,11 +848,11 @@ void loop() {
     if (lcdChanged || iconChanged) {
       emulatorObserved = emulatorSnapshot;
       emulatorObservedValid = true;
-      serialFramePending = true;
+      serialFramePending = serialLcdFramesEnabled;
       if (lcdChanged || iconChanged) rendererFramePending = true;
     }
     const unsigned long now = millis();
-    if (serialFramePending && now - emulatorLastPrintAt >= EMULATOR_SERIAL_FRAME_INTERVAL_MS) {
+    if (serialLcdFramesEnabled && serialFramePending && now - emulatorLastPrintAt >= EMULATOR_SERIAL_FRAME_INTERVAL_MS) {
       printEmulatorSnapshot(emulatorSnapshot);
       emulatorPrinted = emulatorSnapshot;
       emulatorPrintedValid = true;
@@ -849,6 +865,6 @@ void loop() {
     return;
   }
   if (inputReady) updateInputDiagnostic();
-  while (Serial.available()) persistenceCommand(static_cast<char>(Serial.read()));
+  while (Serial.available()) dispatchSerialCommand(static_cast<char>(Serial.read()));
   delay(10);
 }
