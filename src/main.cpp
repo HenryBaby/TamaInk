@@ -15,6 +15,7 @@
 #include "tamaink_rom.h"
 #include "tamaink_tamalib.h"
 #include "tamaink_renderer.h"
+#include "tamaink_renderer_refresh.h"
 #include "tamaink_emulator_state.h"
 #include "tamaink_autosave.h"
 #include "tamaink_wake_diagnostic.h"
@@ -97,6 +98,7 @@ extern uint8_t persistenceCandidate[tamaink::persist::kHeaderSize + tamaink::per
 void rendererTask(void*) {
   tamaink::tamalib::Snapshot frame{};
   bool first = true;
+  tamaink::render::RefreshCadence cadence;
   unsigned long lastRefresh = 0;
   for (;;) {
     if (xQueueReceive(rendererQueue, &frame, pdMS_TO_TICKS(20)) != pdTRUE) {
@@ -124,14 +126,20 @@ void rendererTask(void*) {
       if (first) { rendererFirstFrameConfirmed = false; if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone); }
       continue;
     }
-    rendererDisplay->displayBuffer(first ? EInkDisplay::FULL_REFRESH : EInkDisplay::FAST_REFRESH, false);
+    const auto kind = cadence.next();
+    const bool periodicPromotion = !first && kind == tamaink::render::RefreshKind::Full &&
+                                   cadence.fastFrames() == tamaink::render::RefreshCadence::kFastFramesBeforeFull;
+    rendererDisplay->displayBuffer(kind == tamaink::render::RefreshKind::Full ? EInkDisplay::FULL_REFRESH
+                                                                                : EInkDisplay::FAST_REFRESH,
+                                    false);
+    cadence.presented(kind);
     if (first) {
       const unsigned long refreshStarted = millis();
       while (rendererDisplay->refreshBusy() && millis() - refreshStarted < 12000UL) vTaskDelay(pdMS_TO_TICKS(20));
       rendererFirstFrameConfirmed = !rendererDisplay->refreshBusy();
       if (rendererFirstFrameConfirmed) rendererDisplay->skipInitialResync();
       if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone);
-    }
+    } else if (periodicPromotion) Serial.println("Display renderer: periodic full refresh after 8 fast frames");
     lastRefresh = millis(); first = false;
     if (rendererStopRequested) break;
     vTaskDelay(1);

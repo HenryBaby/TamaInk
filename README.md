@@ -37,7 +37,9 @@ validation remains pending. A temporary fast-forward clock is used only during
 this catch-up, then normal wall-clock pacing is restored; hardware retest is
 pending.
 
-The first rendering increment is build-integrated but hardware-pending. On the
+PR#16 hardware validation confirmed the 400 ms bottom-edge/icon placement on a
+UC8253 X3. The first rendering increment is otherwise build-integrated but
+hardware-pending. On the
 X3, it maps the 32x16 LCD counterclockwise into a centered portrait footprint:
 16x scale, 256x512 pixels at origin (268,8), producing an upright 512x256 view
 when the device buttons are at the bottom. In y-down coordinates, logical
@@ -51,11 +53,12 @@ only their glyph; active icons add four open corner brackets around the 48px
 extent, with 3px thickness and 12px arms leaving edge midpoints open. Hardware
 confirms the semantic order and rotated top/bottom mapping:
 Food, Light, Game, Medicine, Toilet, Health, Discipline, Attention. The new
-bottom-edge placement still requires its hardware validation gate.
-UC8279d and other controllers
-keep the serial emulator active with rendering disabled. The renderer performs
-one initial full refresh, then UC8253 fast refreshes no more often than once per
-400 ms; no periodic cleaning refresh is enabled in this increment.
+bottom-edge placement is hardware validated by PR#16. The renderer performs
+one initial full refresh, then up to eight successfully presented UC8253 fast
+refreshes before promoting the next changed frame to a periodic full refresh;
+periodic-cleaning behavior is hardware-pending. UC8279d and other controllers
+keep the serial emulator active with rendering disabled. UC8253 fast refreshes
+occur no more often than once per 400 ms.
 
 The complete requirements, safety contract, and delivery gates are documented
 in [SCOPE.md](SCOPE.md).
