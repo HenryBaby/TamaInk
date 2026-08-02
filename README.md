@@ -177,6 +177,14 @@ requested between phases. Hardware validation remains pending.
 
 ## Contributing
 
+The `w` command is an explicit wake diagnostic: when the emulator, SD, and
+persistence are idle it performs the same durable save, then stops rendering,
+waits for release, and deep-sleeps armed only for the confirmed GPIO3 power
+button. ADC button ladders cannot identify individual wake buttons; DS3231
+alarm wake is unavailable/unknown, and no timer or automatic sleep is used.
+Wake cause and GPIO status are logged at boot. Hardware validation remains
+pending; USB reset or power cycle is the recovery path.
+
 TamaInk is currently organized around narrow, reviewable milestones. Before
 starting a change:
 
