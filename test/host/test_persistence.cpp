@@ -1,4 +1,5 @@
 #include "tamaink_persistence.h"
+#include "tamaink_emulator_state.h"
 
 #include <cassert>
 #include <cstring>
@@ -42,9 +43,50 @@ int bootSelection(const std::uint8_t* a, std::size_t aSize,
   const bool validB = valid(b, bSize, records[1]);
   return selectNewest(&records[0], validA, &records[1], validB);
 }
+
+int liveBootSelection(const std::uint8_t* a, std::size_t aSize,
+                      const std::uint8_t* b, std::size_t bSize,
+                      const std::uint8_t identity[8]) {
+  Record records[2]{}; bool valid[2]{};
+  for (int i = 0; i < 2; ++i) {
+    const auto* bytes = i == 0 ? a : b; const auto size = i == 0 ? aSize : bSize;
+    tamaink::emulator::State state{};
+    valid[i] = decode(bytes, size, identity, records[i]) == DecodeError::None &&
+               records[i].payloadLength == tamaink::emulator::kEncodedSize &&
+               tamaink::emulator::decode(records[i].payload, records[i].payloadLength, identity, &state) == tamaink::emulator::DecodeError::None;
+  }
+  return selectNewest(&records[0], valid[0], &records[1], valid[1]);
+}
 }
 
 int main() {
+  std::uint8_t identity[8] = {'T','I','N','K',1,2,3,4};
+  tamaink::emulator::State live{};
+  live.cpu_timestamp_frequency = live.cpu_frequency = live.tamalib_timestamp_frequency = 1; live.framerate = 1;
+  std::uint8_t inner[tamaink::emulator::kEncodedSize]{};
+  assert(tamaink::emulator::encode(live, inner, sizeof inner, identity) == sizeof inner);
+  Record nested{}; std::memcpy(nested.rom, identity, 8); nested.payloadLength = sizeof inner; std::memcpy(nested.payload, inner, sizeof inner);
+  std::uint8_t nestedBytes[kHeaderSize + kMaxPayload]{};
+  const auto nestedSize = encode(nested, nestedBytes, sizeof nestedBytes); assert(nestedSize != 0);
+  Record nestedOut{}; assert(decode(nestedBytes, nestedSize, identity, nestedOut) == DecodeError::None);
+  tamaink::emulator::State decoded{}; assert(tamaink::emulator::decode(nestedOut.payload, nestedOut.payloadLength, identity, &decoded) == tamaink::emulator::DecodeError::None);
+  std::uint8_t wrongIdentity[8] = {'T','I','N','K',9,2,3,4}; assert(decode(nestedBytes, nestedSize, wrongIdentity, nestedOut) == DecodeError::BadRom);
+  // Outer CRC can remain valid while the nested emulator blob is corrupt.
+  Record corruptInner = nested; corruptInner.payload[100] ^= 1; std::uint8_t corruptBytes[kHeaderSize + kMaxPayload]{};
+  const auto corruptSize = encode(corruptInner, corruptBytes, sizeof corruptBytes); assert(decode(corruptBytes, corruptSize, identity, nestedOut) == DecodeError::None);
+  assert(tamaink::emulator::decode(nestedOut.payload, nestedOut.payloadLength, identity, &decoded) == tamaink::emulator::DecodeError::Crc);
+  std::uint8_t otherIdentity[8] = {'T','I','N','K',8,7,6,5};
+  Record wrongInner = nested; assert(tamaink::emulator::encode(live, wrongInner.payload, sizeof wrongInner.payload, otherIdentity) == sizeof inner);
+  const auto wrongInnerSize = encode(wrongInner, corruptBytes, sizeof corruptBytes); assert(decode(corruptBytes, wrongInnerSize, identity, nestedOut) == DecodeError::None);
+  assert(tamaink::emulator::decode(nestedOut.payload, nestedOut.payloadLength, identity, &decoded) == tamaink::emulator::DecodeError::Rom);
+  Record older = nested; older.generation = 10;
+  Record newer = nested; newer.generation = 11; newer.payload[100] ^= 1;
+  std::uint8_t olderBytes[kHeaderSize + kMaxPayload]{}, newerBytes[kHeaderSize + kMaxPayload]{};
+  const auto olderSize = encode(older, olderBytes, sizeof olderBytes);
+  const auto newerSize = encode(newer, newerBytes, sizeof newerBytes);
+  assert(liveBootSelection(olderBytes, olderSize, newerBytes, newerSize, identity) == 0);
+  std::uint8_t stagedNested[sizeof nestedBytes]{}; std::memcpy(stagedNested, nestedBytes, nestedSize); assert(stageEncodedRecord(stagedNested, nestedSize)); assert(verifyStagedRecord(stagedNested, nestedSize, nestedBytes, nestedSize)); assert(commitStagedRecord(stagedNested, nestedSize, nestedBytes, nestedSize));
+  stagedNested[kHeaderSize + 20] ^= 1; assert(decode(stagedNested, nestedSize, identity, nestedOut) == DecodeError::BadCrc);
   Record record = makeRecord(5);
   std::uint8_t bytes[kHeaderSize + kMaxPayload]{};
   assert(encode(record, nullptr, sizeof bytes) == 0);
@@ -63,6 +105,8 @@ int main() {
   assert(std::memcmp(bytes, expectedHeader, sizeof expectedHeader) == 0);
   assertRoundTrip(makeRecord(0));
   assertRoundTrip(makeRecord(kMaxPayload));
+  // Full live emulator snapshots (694 bytes) fit in one outer record.
+  assertRoundTrip(makeRecord(694));
 
   Record output{};
   Record oldRecord = makeRecord(8);
