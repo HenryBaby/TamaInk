@@ -23,6 +23,7 @@
 #include "tamaink_rtc_sleep_gate.h"
 #include "tamaink_wake_catchup_plan.h"
 #include "tamaink_wake_catchup.h"
+#include "tamaink_battery_telemetry.h"
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -43,6 +44,8 @@ constexpr unsigned long EMULATOR_SERIAL_FRAME_INTERVAL_MS = 250;
 InputManager inputManager;
 bool inputReady = false;
 bool emulatorActive = false;
+tamaink::battery::WarningPolicy batteryWarning;
+tamaink::battery::Schedule batteryTelemetrySchedule;
 tamaink::tamalib::Adapter emulator;
 std::uint16_t* emulatorProgram = nullptr;
 tamaink::tamalib::Snapshot emulatorSnapshot{};
@@ -321,9 +324,10 @@ bool startEmulator() {
     }
   }
   if (!resumed) Serial.println("Persistence: no importable state; starting fresh");
-  Serial.println("Commands: a autosave-now; l toggle LCD frames; p manual-save; n next-phase; w save+deep-sleep wake diagnostic; c corrupt-newest; x cleanup-owned-state");
+  Serial.println("Commands: a autosave-now; b battery telemetry; l toggle LCD frames; p manual-save; n next-phase; w save+deep-sleep wake diagnostic; c corrupt-newest; x cleanup-owned-state");
   autosaveController.arm(millis(), AUTOSAVE_INTERVAL_MS);
   emulatorActive = true;
+  batteryTelemetrySchedule.arm(millis());
   Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; hold BACK+POWER >=2000 ms, then release for wake diagnostic; display refresh bypassed");
   printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
   emulatorObserved = emulatorSnapshot; emulatorObservedValid = true;
@@ -613,6 +617,7 @@ void runX3RtcBatteryDiagnostic() {
 
   Serial.println("Battery diagnostic: read-only BQ27220 check");
   const BatteryMonitor::Status status = BatteryMonitor().readStatus();
+  if (status.percentageKnown && status.percentage <= 100) batteryWarning.update(true, status.percentage);
   if (!status.supported) {
     Serial.println("Battery: unsupported/unavailable");
     return;
@@ -625,6 +630,31 @@ void runX3RtcBatteryDiagnostic() {
   else Serial.println("Battery millivolts: unknown");
   if (status.chargingKnown) Serial.printf("Battery charging: %s\n", status.charging ? "yes" : "no");
   else Serial.println("Battery charging: unknown");
+}
+
+const char* batteryWarningName(tamaink::battery::WarningState state) {
+  switch (state) {
+    case tamaink::battery::WarningState::Low: return "low";
+    case tamaink::battery::WarningState::Normal: return "normal";
+    default: return "unknown";
+  }
+}
+
+bool sampleBatteryTelemetry(const char* source) {
+  if (wakeDiagnostic.pending || persistenceState != PersistenceState::Idle) {
+    if (source[0] == 'm') Serial.println("Battery telemetry: busy");
+    return false;
+  }
+  const BatteryMonitor::Status status = BatteryMonitor().readStatus();
+  const auto result = batteryWarning.update(status.percentageKnown, status.percentage);
+  Serial.printf("Battery telemetry source=%s supported=%s percentage=%s", source,
+                status.supported ? "yes" : "no", status.percentageKnown && status.percentage <= 100 ? "known" : "unknown");
+  if (status.percentageKnown && status.percentage <= 100) Serial.printf("(%u%%)", status.percentage);
+  Serial.printf(" millivolts=%s", status.millivoltsKnown ? "known" : "unknown");
+  if (status.millivoltsKnown) Serial.printf("(%u)", status.millivolts);
+  Serial.printf(" charging=%s warning=%s\n", status.chargingKnown ? (status.charging ? "yes" : "no") : "unknown", batteryWarningName(result.state));
+  if (result.changed) Serial.printf("Battery warning transition: %s\n", batteryWarningName(result.state));
+  return true;
 }
 
 void beginInputDiagnostic() {
@@ -900,6 +930,11 @@ void persistenceCommand(char c, bool internal = false) {
 }
 
 void dispatchSerialCommand(char c) {
+  if (c == 'b') {
+    if (!emulatorActive) { Serial.println("Battery telemetry refused: emulator inactive"); return; }
+    if (sampleBatteryTelemetry("manual")) batteryTelemetrySchedule.arm(millis());
+    return;
+  }
   if (c == 'w') {
     if (!wakeDiagnostic.request(emulatorActive, persistenceReady, persistenceState == PersistenceState::Idle, autosaveController.automatic, persistenceState == PersistenceState::AwaitReset)) { Serial.println("Wake diagnostic refused: emulator/SD busy, await reset, or request pending"); return; }
     tamaink::autosave::request(autosaveController.scheduler); Serial.println("Wake diagnostic requested: durable save will begin"); return;
@@ -1011,6 +1046,10 @@ void loop() {
   if (emulatorActive) {
     updateEmulatorInput();
     while (Serial.available()) dispatchSerialCommand(static_cast<char>(Serial.read()));
+    const uint32_t nowTelemetry = millis();
+    if (batteryTelemetrySchedule.due(nowTelemetry)) {
+      if (sampleBatteryTelemetry("periodic")) batteryTelemetrySchedule.arm(nowTelemetry);
+    }
     const uint32_t nowAuto = millis();
     if (autosaveController.tick(nowAuto, persistenceState == PersistenceState::Idle, persistenceState == PersistenceState::AwaitReset) == tamaink::autosave::Action::Begin) {
       Serial.println("Autosave: starting staged transaction");
