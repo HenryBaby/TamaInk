@@ -143,7 +143,7 @@ int main() {
   assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
                                    268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
                                    tamaink::render::BatteryStatus{}) == Status::Ok);
-  assert(black(statusBar, x3Stride, 10, 24)); // unknown marker is rendered as --
+  assert(black(statusBar, x3Stride, 10, 32)); // unknown marker is rendered as --
   std::fill(statusBar.begin(), statusBar.end(), 0xFF);
   assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
                                    268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
