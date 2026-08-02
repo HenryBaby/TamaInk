@@ -6,7 +6,8 @@ namespace tamaink::render {
 Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
                std::size_t capacity, std::uint16_t width, std::uint16_t height,
                std::size_t stride, std::int32_t originX, std::int32_t originY,
-               std::uint16_t scale, Rotation rotation, IconLayout iconLayout) {
+               std::uint16_t scale, Rotation rotation, IconLayout iconLayout,
+               BatteryStatus battery) {
   if (!destination || !width || !height || !scale || stride < (static_cast<std::size_t>(width) + 7u) / 8u)
     return Status::InvalidArgument;
   if (rotation != Rotation::None && rotation != Rotation::CounterClockwise90)
