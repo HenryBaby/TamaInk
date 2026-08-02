@@ -31,16 +31,6 @@ void drawVertical(std::uint8_t* buffer, std::size_t stride, int x, int y, int he
   }
 }
 
-bool isPetCutout(int x, int y) {
-  if (y >= -48 && y <= -31) return x >= -55 && x <= 15;
-  if (y >= -30 && y <= -13) return x >= -55 && x <= 32;
-  if (y >= -12 && y <= 5) return x >= -55 && x <= 48;
-  if (y >= 6 && y <= 48) return x >= -55 && x <= 55;
-  if (y >= 49 && y <= 61) return x >= -40 && x <= 55;
-  if (y >= 62 && y <= 72) return x >= -20 && x <= 48;
-  return false;
-}
-
 void drawClosedEye(std::uint8_t* buffer, std::size_t stride, int centerX, int y) {
   drawVertical(buffer, stride, centerX - 12, y, 7, 4);
   drawHorizontal(buffer, stride, centerX - 8, y + 6, 16, 4);
@@ -55,24 +45,13 @@ void drawSleepZ(std::uint8_t* buffer, std::size_t stride, int x, int y) {
   drawHorizontal(buffer, stride, x, y + 19, 18, 4);
 }
 
-void drawLogo(std::uint8_t* buffer, std::size_t stride) {
-  constexpr int centerX = kLogicalWidth / 2;
-  constexpr int centerY = 343;
-
-  // A filled egg with a stepped upper-right opening, matching the reference's
-  // solid silhouette while remaining deterministic on a 1-bit panel.
-  for (int y = -105; y <= 105; ++y) {
-    for (int x = -112; x <= 112; ++x) {
-      if (x * x * 105 + y * y * 112 > 112 * 112 * 105) continue;
-      if (x > 45 && y < -35 + (x - 45) / 2) continue;
-      if (isPetCutout(x, y)) continue;
-      drawPixel(buffer, stride, centerX + x, centerY + y);
-    }
-  }
-
-  drawClosedEye(buffer, stride, centerX - 28, centerY + 12);
-  drawClosedEye(buffer, stride, centerX + 28, centerY + 12);
-  drawSleepZ(buffer, stride, centerX + 22, centerY - 42);
+void drawSleepingFace(std::uint8_t* buffer, std::size_t stride) {
+  // Minimal reference composition: two closed eyes with a pair of rising,
+  // stepped sleep symbols. There is intentionally no enclosing body or egg.
+  drawSleepZ(buffer, stride, 302, 238);
+  drawSleepZ(buffer, stride, 286, 274);
+  drawClosedEye(buffer, stride, 236, 330);
+  drawClosedEye(buffer, stride, 292, 330);
 }
 
 const freeink::ui::FontGlyph* fontGlyph(char character) {
@@ -141,7 +120,7 @@ Status render(std::uint8_t* destination, std::size_t capacity, std::uint16_t wid
   if (bytes > capacity) return Status::InvalidArgument;
 
   std::memset(destination, 0xFF, bytes);
-  drawLogo(destination, stride);
+  drawSleepingFace(destination, stride);
   drawText(destination, stride, 513, "TamaInk", 2, 4, true);
   drawText(destination, stride, 555, "SLEEPING", 1, 8, false);
   return Status::Ok;

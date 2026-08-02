@@ -67,25 +67,27 @@ int main() {
          Status::Ok);
 
   // A golden framebuffer catches changes to wording, casing, weight, layout,
-  // logo, and native orientation in one deterministic assertion.
-  assert(fnv1a(frame) == 0x92EC97E7D6229EB0ull);
+  // sleeping face, and native orientation in one deterministic assertion.
+  assert(fnv1a(frame) == 0x75B5ED34464AA554ull);
   for (int nativeY : {0, kNativeHeight - 1}) {
     for (int nativeX : {0, kNativeWidth - 1}) assert(!nativeBlack(frame, nativeX, nativeY));
   }
 
-  const InkBounds logo = bounds(frame, 130, 220, 398, 455);
+  const InkBounds face = bounds(frame, 180, 220, 350, 360);
   const InkBounds title = bounds(frame, 100, 450, 430, 525);
   const InkBounds sleeping = bounds(frame, 120, 525, 408, 565);
-  assert(logo.left == 152 && logo.right == 376 && logo.top == 238 && logo.bottom == 448);
+  assert(face.left == 224 && face.right == 319 && face.top == 238 && face.bottom == 339);
   assert(title.left == 155 && title.right == 373 && title.top == 475 && title.bottom == 511);
   assert(sleeping.left == 182 && sleeping.right == 345 && sleeping.top == 537 && sleeping.bottom == 553);
   assert(title.left + title.right == 528);
   assert(sleeping.left + sleeping.right == 527);
   assert(title.pixels > sleeping.pixels * 2);  // Bold title versus lighter status.
-  const int compositionTop = logo.top;
+  assert(logicalBlack(frame, 302, 238));  // Upper Z.
+  assert(logicalBlack(frame, 224, 330));  // Left closed eye.
+  const int compositionTop = face.top;
   const int compositionBottom = sleeping.bottom;
-  const int compositionLeft = logo.left;
-  const int compositionRight = logo.right;
+  const int compositionLeft = title.left;
+  const int compositionRight = title.right;
   // The odd-width mark uses the logical x=264 center pixel on an even canvas.
   assert(compositionLeft + compositionRight == 528);
   // On an even-sized logical canvas, this is the exact half-pixel center.
