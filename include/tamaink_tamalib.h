@@ -39,6 +39,7 @@ class Adapter {
   Status init(const std::uint16_t* program, std::size_t count,
               Snapshot* snapshot = nullptr);
   Status release();
+  Status set_fast_forward(bool enabled);
   Status step(std::size_t count, Snapshot* snapshot = nullptr);
   Status set_button(Button button, bool pressed);
   Status snapshot(Snapshot* out) const;

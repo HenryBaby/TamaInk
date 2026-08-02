@@ -282,6 +282,10 @@ bool startEmulator() {
                                                         plan.maxInstructionAttempts,
                                                         emulatorSnapshot.timestamp);
             const unsigned long startedAt = millis();
+            const auto fastForwardStatus = emulator.set_fast_forward(true);
+            if (fastForwardStatus != tamaink::tamalib::Status::Ok) {
+              controller.stop(tamaink::wake::CatchupOutcome::AdapterError, emulatorSnapshot.timestamp);
+            }
             while (!controller.done()) {
               if (millis() - startedAt >= 10000UL) {
                 controller.stop(tamaink::wake::CatchupOutcome::Watchdog, emulatorSnapshot.timestamp);
@@ -295,6 +299,9 @@ bool startEmulator() {
                                   batch, status == tamaink::tamalib::Status::Ok);
               if (status == tamaink::tamalib::Status::Ok) emulatorSnapshot = next;
             }
+            const auto restoreStatus = emulator.set_fast_forward(false);
+            if (restoreStatus != tamaink::tamalib::Status::Ok)
+              Serial.printf("Wake catch-up: failed to restore normal clock mode (%u)\n", static_cast<unsigned>(restoreStatus));
             const auto result = controller.result();
             Serial.printf("Wake catch-up: requested=%llu s planned=%lu s outcome=%s attempts=%lu finalTicks=%lu targetTicks=%lu capped=%s\n",
                           static_cast<unsigned long long>(plan.requestedSeconds),

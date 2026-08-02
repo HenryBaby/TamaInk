@@ -33,7 +33,9 @@ proven independently before later work is allowed to depend on it.
 Deep-sleep resume now applies bounded emulator catch-up after a valid RTC
 resume, before normal startup. Execution is limited to 300 planned seconds,
 2,000,000 instruction attempts, or a 10-second boot watchdog; hardware
-validation remains pending.
+validation remains pending. A temporary fast-forward clock is used only during
+this catch-up, then normal wall-clock pacing is restored; hardware retest is
+pending.
 
 The first rendering increment is build-integrated but hardware-pending. On the
 X3, it maps the 32x16 LCD counterclockwise into a centered portrait footprint:
