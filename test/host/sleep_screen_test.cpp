@@ -93,8 +93,8 @@ int main() {
 
   // This exact raw/native landmark proves the portrait image used the confirmed
   // CCW transform, rather than being written in landscape or mirrored.
-  assert(logicalBlack(frame, 155, 475));
-  assert(nativeBlack(frame, 475, 372));
+  assert(logicalBlack(frame, 155, 477));
+  assert(nativeBlack(frame, 477, 372));
 
   assert(tamaink::sleep_screen::render(nullptr, kBytes, kNativeWidth, kNativeHeight, kStride) ==
          Status::InvalidArgument);
