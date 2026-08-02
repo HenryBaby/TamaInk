@@ -18,6 +18,8 @@
 #include "tamaink_emulator_state.h"
 #include "tamaink_autosave.h"
 #include "tamaink_wake_diagnostic.h"
+#include "tamaink_sleep_gesture.h"
+#include "tamaink_sleep_screen.h"
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -60,6 +62,8 @@ bool rendererEnabled = false;
 bool rendererBegun = false;
 volatile bool rendererStopRequested = false;
 tamaink::wake::Coordinator wakeDiagnostic;
+tamaink::sleep_gesture::Controller sleepGesture;
+void dispatchSerialCommand(char c);
 bool initializeX3SharedSpi();
 void scanPersistence();
 bool readPersistenceSlot(uint8_t slot, tamaink::persist::Record& out);
@@ -195,6 +199,34 @@ void updateEmulatorInput() {
                     status == tamaink::tamalib::Status::Ok ? "" : " (adapter error)");
     }
   }
+  const auto gestureEvent = sleepGesture.update(
+      static_cast<uint32_t>(millis()), inputManager.isPressed(InputManager::BTN_BACK),
+      inputManager.isPressed(InputManager::BTN_POWER));
+  if (gestureEvent == tamaink::sleep_gesture::Controller::Event::Cancelled) {
+    Serial.println("Wake diagnostic gesture canceled: BACK+POWER chord released before 2000 ms");
+  } else if (gestureEvent == tamaink::sleep_gesture::Controller::Event::Trigger) {
+    Serial.println("Wake diagnostic gesture released: requesting durable save");
+    dispatchSerialCommand('w');
+  }
+}
+
+void renderSleepScreenAndRelease() {
+  if (!rendererDisplay || !rendererBegun || !rendererDisplay->framebufferReady()) {
+    Serial.println("Sleep screen unavailable; continuing to ESP sleep");
+    stopRenderer();
+    return;
+  }
+  const auto status = tamaink::sleep_screen::render(rendererDisplay->getFrameBuffer(),
+      rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
+      rendererDisplay->getDisplayWidthBytes());
+  if (status == tamaink::sleep_screen::Status::Ok) {
+    rendererDisplay->displayBuffer(EInkDisplay::FULL_REFRESH, true);
+  } else Serial.println("Sleep screen geometry rejected; continuing to ESP sleep");
+  rendererDisplay->releaseBuffers();
+  rendererDisplay->deepSleep();
+  delete rendererDisplay; rendererDisplay = nullptr; rendererBegun = false; rendererEnabled = false;
+  if (rendererStopped) { vSemaphoreDelete(rendererStopped); rendererStopped = nullptr; }
+  if (rendererQueue) { vQueueDelete(rendererQueue); rendererQueue = nullptr; }
 }
 bool startEmulator() {
   FsFile file = SdMan.open("/rom.bin", O_RDONLY);
@@ -238,7 +270,7 @@ bool startEmulator() {
   Serial.println("Commands: a autosave-now; l toggle LCD frames; p manual-save; n next-phase; w save+deep-sleep wake diagnostic; c corrupt-newest; x cleanup-owned-state");
   autosaveController.arm(millis(), AUTOSAVE_INTERVAL_MS);
   emulatorActive = true;
-  Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; display refresh bypassed");
+  Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; hold BACK+POWER >=2000 ms, then release for wake diagnostic; display refresh bypassed");
   printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
   emulatorObserved = emulatorSnapshot; emulatorObservedValid = true;
   serialFramePending = false; rendererFramePending = false; emulatorLastPrintAt = millis();
@@ -751,7 +783,29 @@ void enterWakeDiagnosticSleep() {
     Serial.println("Wake diagnostic canceled: power-button wake arm failed");
     return;
   }
-  stopRenderer();
+  // Quiesce and join the renderer before touching its framebuffer.
+  rendererStopRequested = true;
+  if (rendererTaskHandle && rendererStopped) {
+    if (xSemaphoreTake(rendererStopped, portMAX_DELAY) == pdTRUE) {
+      vTaskDelete(rendererTaskHandle); rendererTaskHandle = nullptr;
+    }
+  }
+  renderSleepScreenAndRelease();
+  // Revalidate release and arm immediately before rail shutdown; a stale
+  // button state must never leave the device showing a misleading terminal screen.
+  bool releasedAgain = powerPin < 0;
+  if (powerPin >= 0) {
+    const int pressedLevel = activeHigh ? HIGH : LOW;
+    const unsigned long checkStart = millis();
+    while (digitalRead(powerPin) == pressedLevel && millis() - checkStart < 1000UL) delay(20);
+    releasedAgain = digitalRead(powerPin) != pressedLevel;
+  }
+  if (!releasedAgain || !freeink::PowerManager::armPowerButtonWakeup()) {
+    Serial.println("Wake diagnostic canceled: final GPIO3 release/arm failed; restoring renderer");
+    wakeDiagnostic.armFailed(); wakeDiagnostic.requested = false;
+    if (emulatorActive && !rendererEnabled && startRenderer()) xQueueOverwrite(rendererQueue, &emulatorSnapshot);
+    return;
+  }
   freeink::PowerManager::powerDownRailsForSleep();
   Serial.println("Wake diagnostic: armed GPIO3 power-button wake; entering deep sleep");
   Serial.flush();
