@@ -108,7 +108,8 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
       {7,5,5,5,7},{2,6,2,2,7},{7,1,7,4,7},{7,1,7,1,7},{5,5,7,1,1},
       {7,4,7,1,7},{7,4,7,5,7},{7,1,1,1,1},{7,5,7,5,7},{7,5,7,1,7},{0,0,7,0,0}
     };
-    constexpr std::int64_t digitScale = 6;
+    constexpr std::int64_t digitScaleX = 6;
+    constexpr std::int64_t digitHeight = 28;
     // Top status region is 64 physical pixels high; no divider is drawn.
     constexpr std::int64_t iconX = 8, iconY = 17, iconW = 72, iconH = 30;
     constexpr std::int64_t border = 4;
@@ -133,13 +134,13 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     }
     const unsigned value = battery.percentageKnown && battery.percentage <= 100 ? battery.percentage : 0;
     const unsigned tens = value / 10, ones = value % 10;
-    const std::int64_t textY = 17, textStart = 96, digitPitch = 24;
+    const std::int64_t textY = 18, textStart = 96, digitPitch = 24;
     auto glyph = [&](unsigned digit, std::int64_t x0) {
       for (unsigned gy = 0; gy < 5; ++gy) for (unsigned gx = 0; gx < 3; ++gx)
         if (digits[digit][gy] & (1u << (2u - gx)))
-          for (std::int64_t py = 0; py < digitScale; ++py)
-            for (std::int64_t px = 0; px < digitScale; ++px)
-              pixelPhysical(x0 + gx * digitScale + px, textY + gy * digitScale + py, true);
+          for (std::int64_t py = gy * digitHeight / 5; py < (gy + 1) * digitHeight / 5; ++py)
+            for (std::int64_t px = 0; px < digitScaleX; ++px)
+              pixelPhysical(x0 + gx * digitScaleX + px, textY + py, true);
     };
     std::int64_t textX = textStart;
     if (battery.percentageKnown && battery.percentage <= 100) {
