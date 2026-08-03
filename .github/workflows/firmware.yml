@@ -51,6 +51,8 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/test_autosave.cpp -o /tmp/tamaink-autosave-tests && /tmp/tamaink-autosave-tests
       - name: Run battery telemetry policy host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_battery_telemetry.cpp test/host/test_battery_telemetry.cpp -o /tmp/tamaink-battery-telemetry-tests && /tmp/tamaink-battery-telemetry-tests
+      - name: Run board battery safety policy host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/test_battery_policy.cpp -o /tmp/tamaink-battery-policy-tests && /tmp/tamaink-battery-policy-tests
       - name: Run low-battery sleep coordinator host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_low_battery_sleep.cpp test/host/test_low_battery_sleep.cpp -o /tmp/tamaink-low-battery-sleep-tests && /tmp/tamaink-low-battery-sleep-tests
       - name: Run wake diagnostic coordinator host tests
@@ -65,6 +67,8 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_clock.cpp test/host/test_clock.cpp -o /tmp/tamaink-clock-tests && /tmp/tamaink-clock-tests
       - name: Run settings controller host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_settings.cpp test/host/test_settings.cpp -o /tmp/tamaink-settings-tests && /tmp/tamaink-settings-tests
+      - name: Run board policy host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/test_board_policy.cpp -o /tmp/tamaink-board-policy-tests && /tmp/tamaink-board-policy-tests
 
       - name: Run ROM validation host sanitizer tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_rom.cpp test/host/test_rom.cpp -o /tmp/tamaink-rom-tests && /tmp/tamaink-rom-tests

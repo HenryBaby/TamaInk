@@ -28,6 +28,8 @@
 #include "tamaink_battery_telemetry.h"
 #include "tamaink_low_battery_sleep.h"
 #include "tamaink_settings.h"
+#include "tamaink_battery_policy.h"
+#include "tamaink_board_policy.h"
 #include <Preferences.h>
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
@@ -56,6 +58,13 @@ volatile bool batteryPercentageKnown = false;
 volatile std::uint8_t batteryPercentage = 0;
 tamaink::low_battery::Coordinator lowBatterySleep;
 tamaink::low_battery::TransactionArbiter saveArbiter;
+tamaink::battery::Policy activeBatteryPolicy() {
+  if (BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3 || BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3Uc8279)
+    return tamaink::battery::policy(tamaink::battery::Backend::X3Gauge);
+  if (BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX4)
+    return tamaink::battery::policy(tamaink::battery::Backend::X4Adc);
+  return tamaink::battery::policy(tamaink::battery::Backend::Unknown);
+}
 tamaink::tamalib::Adapter emulator;
 std::uint16_t* emulatorProgram = nullptr;
 tamaink::tamalib::Snapshot emulatorSnapshot{};
@@ -124,7 +133,7 @@ std::uint64_t wakeCatchupElapsedSeconds = 0;
 std::uint32_t wakeCatchupVirtualTimestamp = 0;
 std::uint32_t wakeCatchupTimestampFrequency = 0;
 void dispatchSerialCommand(char c);
-bool initializeX3SharedSpi();
+bool initializeSharedSpi();
 bool readRtcEpoch(std::uint64_t& epoch);
 void scanPersistence();
 bool readPersistenceSlot(uint8_t slot, tamaink::persist::Record& out);
@@ -166,9 +175,12 @@ void rendererTask(void*) {
     }
     const std::uint8_t threshold = tamaink::settings::cleaningThreshold(packet.settings.display);
     cadence.setThreshold(threshold);
+    const auto displayWidth = rendererDisplay->getDisplayWidth();
+    const auto displayHeight = rendererDisplay->getDisplayHeight();
+    const std::int32_t lcdOriginX = (static_cast<std::int32_t>(displayWidth) - 16 * 16) / 2;
     const auto status = tamaink::render::snapshot(packet.frame, rendererDisplay->getFrameBuffer(),
-        rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
-        rendererDisplay->getDisplayWidthBytes(), 268, 8, 16, tamaink::render::Rotation::CounterClockwise90,
+        rendererDisplay->getBufferSize(), displayWidth, displayHeight,
+        rendererDisplay->getDisplayWidthBytes(), lcdOriginX, 8, 16, tamaink::render::Rotation::CounterClockwise90,
         tamaink::render::IconLayout::P1BottomRow,
         tamaink::render::BatteryStatus{packet.batteryKnown, packet.battery,
           packet.settings.battery == tamaink::settings::Battery::Show});
@@ -219,16 +231,20 @@ void stopRenderer() {
 }
 
 bool startRenderer() {
-  if (BoardConfig::ACTIVE.displayController != BoardConfig::DisplayController::UC8253) {
-    Serial.println("Display rendering disabled: controller is not UC8253; serial emulator remains active");
+  const auto controller = BoardConfig::ACTIVE.displayController;
+  if (controller != BoardConfig::DisplayController::UC8253 &&
+      controller != BoardConfig::DisplayController::SSD1677) {
+    Serial.println("Display rendering disabled: controller is not UC8253/SSD1677; serial emulator remains active");
     return false;
   }
   const auto& p = BoardConfig::ACTIVE.display;
   rendererDisplay = new (std::nothrow) EInkDisplay(p.sclk, p.mosi, p.cs, p.dc, p.rst, p.busy);
   if (!rendererDisplay) { Serial.println("Display renderer: EInkDisplay allocation failed"); return false; }
-  rendererDisplay->setDisplayX3();
+  if (BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3 ||
+      BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3Uc8279)
+    rendererDisplay->setDisplayX3();
   rendererStopRequested = false;
-  if (!initializeX3SharedSpi()) { delete rendererDisplay; rendererDisplay = nullptr; return false; }
+  if (!initializeSharedSpi()) { delete rendererDisplay; rendererDisplay = nullptr; return false; }
   rendererDisplay->begin();
   rendererBegun = true;
   if (!rendererDisplay->framebufferReady()) { Serial.println("Display renderer: framebuffer allocation failed"); stopRenderer(); return false; }
@@ -243,7 +259,8 @@ bool startRenderer() {
     Serial.println("Display renderer: task allocation failed"); stopRenderer(); return false;
   }
   rendererEnabled = true;
-  Serial.println("Display renderer: UC8253 X3 active (16x scale, centered CCW portrait; P1 order confirmed; bottom-row layout validation pending)");
+  Serial.printf("Display renderer: %s active (16x scale, centered CCW portrait; P1 order confirmed; bottom-row layout validation pending)\n",
+                controller == BoardConfig::DisplayController::SSD1677 ? "SSD1677 X4" : "UC8253 X3");
   return true;
 }
 
@@ -420,6 +437,10 @@ bool startEmulator() {
       persistenceSlot = slot; persistenceGeneration = persistenceBootRecord[slot].generation; resumed = true;
       Serial.printf("Persistence: resumed generation=%lu from slot %c\n", static_cast<unsigned long>(persistenceGeneration), 'A' + slot);
       if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+        if (!BoardConfig::hasRtc()) {
+          Serial.println("Wake: RTC not present on X4; emulated time paused, no elapsed advancement");
+          continue;
+        }
         std::uint64_t saved = 0, nowRtc = 0;
         const bool sv = tamaink::rtc::decodeTagged(persistenceBootRecord[slot].timestamp, saved);
         const bool cv = readRtcEpoch(nowRtc);
@@ -564,6 +585,10 @@ const char* displayControllerName(BoardConfig::DisplayController controller) {
       return "UC8253";
     case BoardConfig::DisplayController::UC8279:
       return "UC8279d";
+    case BoardConfig::DisplayController::SSD1677:
+      return "SSD1677";
+    case BoardConfig::DisplayController::UC8179:
+      return "UC8179";
     default:
       return "unsupported";
   }
@@ -695,11 +720,11 @@ void printAdcSnapshot() {
                 classifiedButtonName(group2.button));
 }
 
-bool initializeX3SharedSpi() {
+bool initializeSharedSpi() {
   const auto& displayPins = BoardConfig::ACTIVE.display;
   const auto& sdPins = BoardConfig::ACTIVE.sd;
   if (displayPins.sclk < 0 || displayPins.mosi < 0 || displayPins.cs < 0 || sdPins.miso < 0 || sdPins.cs < 0) {
-    Serial.printf("X3 SPI init skipped: invalid pins (display sclk=%d mosi=%d cs=%d; SD miso=%d cs=%d)\n",
+    Serial.printf("Shared SPI init skipped: invalid pins (display sclk=%d mosi=%d cs=%d; SD miso=%d cs=%d)\n",
                   displayPins.sclk, displayPins.mosi, displayPins.cs, sdPins.miso, sdPins.cs);
     return false;
   }
@@ -710,15 +735,15 @@ bool initializeX3SharedSpi() {
   digitalWrite(sdPins.cs, HIGH);
   if (!SPI.begin(displayPins.sclk, sdPins.miso, displayPins.mosi, displayPins.cs)) {
     SPI.end();
-    Serial.println("X3 shared SPI init failed");
+    Serial.println("Shared SPI init failed");
     return false;
   }
-  Serial.printf("X3 shared SPI ready: sclk=%d miso=%d mosi=%d displayCS=%d sdCS=%d\n", displayPins.sclk,
+  Serial.printf("Shared SPI ready: sclk=%d miso=%d mosi=%d displayCS=%d sdCS=%d\n", displayPins.sclk,
                 sdPins.miso, displayPins.mosi, displayPins.cs, sdPins.cs);
   return true;
 }
 
-bool readX3RtcRegister(uint8_t reg, uint8_t& value) {
+bool readRtcRegister(uint8_t reg, uint8_t& value) {
   const auto& sensor = BoardConfig::ACTIVE.sensors;
   if (sensor.rtcAddr == 0 || sensor.i2cSda < 0 || sensor.i2cScl < 0 || sensor.i2cHz == 0) return false;
   Wire.begin(sensor.i2cSda, sensor.i2cScl, sensor.i2cHz);
@@ -731,7 +756,7 @@ bool readX3RtcRegister(uint8_t reg, uint8_t& value) {
   return true;
 }
 
-bool readX3RtcTime(uint8_t raw[7]) {
+bool readRtcTime(uint8_t raw[7]) {
   const auto& sensor = BoardConfig::ACTIVE.sensors;
   if (sensor.rtcAddr == 0 || sensor.i2cSda < 0 || sensor.i2cScl < 0 || sensor.i2cHz == 0) return false;
   Wire.begin(sensor.i2cSda, sensor.i2cScl, sensor.i2cHz);
@@ -744,21 +769,21 @@ bool readX3RtcTime(uint8_t raw[7]) {
   return true;
 }
 
-bool readRtcEpoch(std::uint64_t& epoch) { uint8_t raw[7]{}; tamaink::rtc::DateTime dt{}; return readX3RtcTime(raw) && tamaink::rtc::decodeDs3231(raw, dt, epoch); }
+bool readRtcEpoch(std::uint64_t& epoch) { uint8_t raw[7]{}; tamaink::rtc::DateTime dt{}; return readRtcTime(raw) && tamaink::rtc::decodeDs3231(raw, dt, epoch); }
 
-void runX3RtcBatteryDiagnostic() {
+void runRtcBatteryDiagnostic() {
   Serial.println("RTC diagnostic: read-only DS3231 check");
   if (!BoardConfig::hasRtc()) {
-    Serial.println("RTC: unavailable");
+    Serial.printf("RTC: not present on %s\n", BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX4 ? "X4" : "selected board");
   } else {
     uint8_t status = 0;
-    if (!readX3RtcRegister(0x0F, status)) {
+    if (!readRtcRegister(0x0F, status)) {
       Serial.println("RTC: unavailable/I2C failure");
     } else if ((status & 0x80U) != 0) {
       Serial.println("RTC: present but oscillator-stopped (OSF)");
     } else {
       uint8_t raw[7] = {};
-      if (!readX3RtcTime(raw)) {
+      if (!readRtcTime(raw)) {
         Serial.println("RTC: unavailable/I2C failure");
       } else {
         tamaink::rtc::DateTime dt{}; std::uint64_t epoch = 0;
@@ -771,7 +796,9 @@ void runX3RtcBatteryDiagnostic() {
     }
   }
 
-  Serial.println("Battery diagnostic: read-only BQ27220 check");
+  Serial.println("Battery diagnostic: read-only active-backend check");
+  const auto batteryPolicy = activeBatteryPolicy();
+  Serial.printf("Battery backend/policy: %s\n", batteryPolicy.message);
   const BatteryMonitor::Status status = BatteryMonitor().readStatus();
   batteryPercentageKnown = status.percentageKnown && status.percentage <= 100;
   batteryPercentage = batteryPercentageKnown ? static_cast<std::uint8_t>(status.percentage) : 0;
@@ -804,6 +831,7 @@ bool sampleBatteryTelemetry(const char* source) {
     return false;
   }
   const BatteryMonitor::Status status = BatteryMonitor().readStatus();
+  const auto batteryPolicy = activeBatteryPolicy();
   const bool oldBatteryKnown = batteryPercentageKnown;
   const std::uint8_t oldBatteryPercentage = batteryPercentage;
   const auto result = batteryWarning.update(status.percentageKnown, status.percentage);
@@ -816,14 +844,14 @@ bool sampleBatteryTelemetry(const char* source) {
   if (status.percentageKnown && status.percentage <= 100) Serial.printf("(%u%%)", status.percentage);
   Serial.printf(" millivolts=%s", status.millivoltsKnown ? "known" : "unknown");
   if (status.millivoltsKnown) Serial.printf("(%u)", status.millivolts);
-  Serial.printf(" charging=%s warning=%s\n", status.chargingKnown ? (status.charging ? "yes" : "no") : "unknown", batteryWarningName(result.state));
+  Serial.printf(" charging=%s warning=%s policy=%s\n", status.chargingKnown ? (status.charging ? "yes" : "no") : "unknown", batteryWarningName(result.state), batteryPolicy.message);
   if (result.changed) Serial.printf("Battery warning transition: %s\n", batteryWarningName(result.state));
   tamaink::low_battery::Sample sample{status.percentageKnown && status.percentage <= 100,
                                       status.percentage, status.chargingKnown, status.charging};
   const bool ready = emulatorActive && persistenceReady && persistenceState == PersistenceState::Idle &&
                      !autosaveController.automatic && !autosaveController.scheduler.immediate && !wakeDiagnostic.pending && !wakeDiagnostic.requested &&
                      persistenceState != PersistenceState::AwaitReset;
-  if (lowBatterySleep.observe(sample, ready)) {
+  if (batteryPolicy.automaticProtection() && lowBatterySleep.observe(sample, ready)) {
     if (!saveArbiter.claim(tamaink::low_battery::Owner::LowBattery)) {
       lowBatterySleep.saveFailed();
       Serial.println("Low-battery sleep refused: save transaction already owned");
@@ -836,6 +864,10 @@ bool sampleBatteryTelemetry(const char* source) {
 }
 
 void injectLowBatterySample() {
+  if (!activeBatteryPolicy().automaticProtection()) {
+    Serial.printf("Battery telemetry source=diagnostic-B ignored: %s\n", activeBatteryPolicy().message);
+    return;
+  }
   if (lowBatterySleep.pending() || lowBatterySleep.latched()) {
     Serial.println("Battery telemetry source=diagnostic-B injected percentage=15% charging=no; low-battery request already pending/latched (ignored)");
     return;
@@ -1291,11 +1323,31 @@ void setup() {
   Serial.printf("Board detection: %s (I2C scores %u/%u)\n", xteinkVerdictName(boardVerdict), detectionScore1,
                 detectionScore2);
 
-  if (boardVerdict == freeink::XteinkVerdict::X3Confirmed) {
-    // XteinkDetect has completed and released its temporary I2C bus use here.
-    runX3RtcBatteryDiagnostic();
+  if (boardVerdict == freeink::XteinkVerdict::X3Confirmed ||
+      boardVerdict == freeink::XteinkVerdict::X4Confirmed) {
+    // Resolve the runtime profile and controller before touching SD/display.
+    const bool isX3 = boardVerdict == freeink::XteinkVerdict::X3Confirmed;
+    BoardConfig::selectDevice(isX3 ? BoardConfig::Board::XteinkX3 : BoardConfig::Board::XteinkX4);
+    runRtcBatteryDiagnostic();
     freeink::applyXteinkDisplayController();
     Serial.printf("Display controller: %s\n", displayControllerName(BoardConfig::ACTIVE.displayController));
+
+    const auto controller = [&] {
+      switch (BoardConfig::ACTIVE.displayController) {
+        case BoardConfig::DisplayController::UC8253: return tamaink::board::Controller::Uc8253;
+        case BoardConfig::DisplayController::SSD1677: return tamaink::board::Controller::Ssd1677;
+        case BoardConfig::DisplayController::UC8279: return tamaink::board::Controller::Uc8279d;
+        case BoardConfig::DisplayController::UC8179: return tamaink::board::Controller::Uc8179;
+        default: return tamaink::board::Controller::Unknown;
+      }
+    }();
+    const auto decision = tamaink::board::validate(
+        isX3 ? tamaink::board::Family::X3 : tamaink::board::Family::X4, controller);
+    Serial.printf("Board policy: %s\n", decision.message);
+    if (!decision.accepted()) {
+      Serial.println("Boot stopped before emulator/display initialization.");
+      return;
+    }
 
     if (!SdMan.begin()) {
       Serial.println("Emulator: SD mount failed; continuing hardware diagnostics");
@@ -1318,10 +1370,15 @@ void setup() {
       return;
     }
 
+    if (!isX3) {
+      Serial.println("X4 SSD1677 renderer supported; standalone display diagnostic unavailable after emulator startup failure.");
+      return;
+    }
+
     const auto& pins = BoardConfig::ACTIVE.display;
     static EInkDisplay display(pins.sclk, pins.mosi, pins.cs, pins.dc, pins.rst, pins.busy);
     display.setDisplayX3();
-    if (!initializeX3SharedSpi()) return;
+    if (!initializeSharedSpi()) return;
     display.begin();
     if (!display.framebufferReady()) {
       Serial.println("Display test aborted: framebuffer allocation failed.");
@@ -1363,7 +1420,7 @@ void setup() {
     Serial.println("Persistence gate: p=begin live save, n=advance phase (repeat), c=corrupt newest, x=cleanup owned state paths");
     beginInputDiagnostic();
   } else {
-    Serial.println("Board detection stopped; display pins untouched.");
+    Serial.println("Board detection rejected: ambiguous X3/X4 fingerprint; refusing unsafe controller fallback; display pins untouched.");
   }
 }
 

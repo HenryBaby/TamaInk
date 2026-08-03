@@ -42,7 +42,7 @@ upstream GPL notices.
 - Project: <https://github.com/Free-Ink/freeink-sdk>
 - Copyright: FreeInk and contributors
 - License: MIT
-- Use: pinned source dependency providing Xteink X3 hardware support
+- Use: pinned source dependency providing regular Xteink X3/X4 hardware support
 - Distribution obligations: preserve the MIT copyright and permission notice,
   FreeInk's `NOTICE`, and all applicable transitive notices
 
