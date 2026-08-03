@@ -28,6 +28,7 @@
 #include "tamaink_battery_telemetry.h"
 #include "tamaink_low_battery_sleep.h"
 #include "tamaink_settings.h"
+#include "tamaink_battery_policy.h"
 #include "tamaink_board_policy.h"
 #include <Preferences.h>
 #include <PowerManager.h>
@@ -57,6 +58,13 @@ volatile bool batteryPercentageKnown = false;
 volatile std::uint8_t batteryPercentage = 0;
 tamaink::low_battery::Coordinator lowBatterySleep;
 tamaink::low_battery::TransactionArbiter saveArbiter;
+tamaink::battery::Policy activeBatteryPolicy() {
+  if (BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3 || BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3Uc8279)
+    return tamaink::battery::policy(tamaink::battery::Backend::X3Gauge);
+  if (BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX4)
+    return tamaink::battery::policy(tamaink::battery::Backend::X4Adc);
+  return tamaink::battery::policy(tamaink::battery::Backend::Unknown);
+}
 tamaink::tamalib::Adapter emulator;
 std::uint16_t* emulatorProgram = nullptr;
 tamaink::tamalib::Snapshot emulatorSnapshot{};
@@ -788,7 +796,9 @@ void runRtcBatteryDiagnostic() {
     }
   }
 
-  Serial.println("Battery diagnostic: read-only BQ27220 check");
+  Serial.println("Battery diagnostic: read-only active-backend check");
+  const auto batteryPolicy = activeBatteryPolicy();
+  Serial.printf("Battery backend/policy: %s\n", batteryPolicy.message);
   const BatteryMonitor::Status status = BatteryMonitor().readStatus();
   batteryPercentageKnown = status.percentageKnown && status.percentage <= 100;
   batteryPercentage = batteryPercentageKnown ? static_cast<std::uint8_t>(status.percentage) : 0;
@@ -821,6 +831,7 @@ bool sampleBatteryTelemetry(const char* source) {
     return false;
   }
   const BatteryMonitor::Status status = BatteryMonitor().readStatus();
+  const auto batteryPolicy = activeBatteryPolicy();
   const bool oldBatteryKnown = batteryPercentageKnown;
   const std::uint8_t oldBatteryPercentage = batteryPercentage;
   const auto result = batteryWarning.update(status.percentageKnown, status.percentage);
@@ -833,14 +844,14 @@ bool sampleBatteryTelemetry(const char* source) {
   if (status.percentageKnown && status.percentage <= 100) Serial.printf("(%u%%)", status.percentage);
   Serial.printf(" millivolts=%s", status.millivoltsKnown ? "known" : "unknown");
   if (status.millivoltsKnown) Serial.printf("(%u)", status.millivolts);
-  Serial.printf(" charging=%s warning=%s\n", status.chargingKnown ? (status.charging ? "yes" : "no") : "unknown", batteryWarningName(result.state));
+  Serial.printf(" charging=%s warning=%s policy=%s\n", status.chargingKnown ? (status.charging ? "yes" : "no") : "unknown", batteryWarningName(result.state), batteryPolicy.message);
   if (result.changed) Serial.printf("Battery warning transition: %s\n", batteryWarningName(result.state));
   tamaink::low_battery::Sample sample{status.percentageKnown && status.percentage <= 100,
                                       status.percentage, status.chargingKnown, status.charging};
   const bool ready = emulatorActive && persistenceReady && persistenceState == PersistenceState::Idle &&
                      !autosaveController.automatic && !autosaveController.scheduler.immediate && !wakeDiagnostic.pending && !wakeDiagnostic.requested &&
                      persistenceState != PersistenceState::AwaitReset;
-  if (lowBatterySleep.observe(sample, ready)) {
+  if (batteryPolicy.automaticProtection() && lowBatterySleep.observe(sample, ready)) {
     if (!saveArbiter.claim(tamaink::low_battery::Owner::LowBattery)) {
       lowBatterySleep.saveFailed();
       Serial.println("Low-battery sleep refused: save transaction already owned");
@@ -853,6 +864,10 @@ bool sampleBatteryTelemetry(const char* source) {
 }
 
 void injectLowBatterySample() {
+  if (!activeBatteryPolicy().automaticProtection()) {
+    Serial.printf("Battery telemetry source=diagnostic-B ignored: %s\n", activeBatteryPolicy().message);
+    return;
+  }
   if (lowBatterySleep.pending() || lowBatterySleep.latched()) {
     Serial.println("Battery telemetry source=diagnostic-B injected percentage=15% charging=no; low-battery request already pending/latched (ignored)");
     return;
