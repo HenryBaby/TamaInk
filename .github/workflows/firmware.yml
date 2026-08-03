@@ -65,6 +65,8 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_clock.cpp test/host/test_clock.cpp -o /tmp/tamaink-clock-tests && /tmp/tamaink-clock-tests
       - name: Run settings controller host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_settings.cpp test/host/test_settings.cpp -o /tmp/tamaink-settings-tests && /tmp/tamaink-settings-tests
+      - name: Run board policy host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/test_board_policy.cpp -o /tmp/tamaink-board-policy-tests && /tmp/tamaink-board-policy-tests
 
       - name: Run ROM validation host sanitizer tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_rom.cpp test/host/test_rom.cpp -o /tmp/tamaink-rom-tests && /tmp/tamaink-rom-tests

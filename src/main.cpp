@@ -28,6 +28,7 @@
 #include "tamaink_battery_telemetry.h"
 #include "tamaink_low_battery_sleep.h"
 #include "tamaink_settings.h"
+#include "tamaink_board_policy.h"
 #include <Preferences.h>
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
@@ -564,6 +565,10 @@ const char* displayControllerName(BoardConfig::DisplayController controller) {
       return "UC8253";
     case BoardConfig::DisplayController::UC8279:
       return "UC8279d";
+    case BoardConfig::DisplayController::SSD1677:
+      return "SSD1677";
+    case BoardConfig::DisplayController::UC8179:
+      return "UC8179";
     default:
       return "unsupported";
   }
@@ -1291,11 +1296,31 @@ void setup() {
   Serial.printf("Board detection: %s (I2C scores %u/%u)\n", xteinkVerdictName(boardVerdict), detectionScore1,
                 detectionScore2);
 
-  if (boardVerdict == freeink::XteinkVerdict::X3Confirmed) {
-    // XteinkDetect has completed and released its temporary I2C bus use here.
-    runX3RtcBatteryDiagnostic();
+  if (boardVerdict == freeink::XteinkVerdict::X3Confirmed ||
+      boardVerdict == freeink::XteinkVerdict::X4Confirmed) {
+    // Resolve the runtime profile and controller before touching SD/display.
+    const bool isX3 = boardVerdict == freeink::XteinkVerdict::X3Confirmed;
+    BoardConfig::selectDevice(isX3 ? BoardConfig::Board::XteinkX3 : BoardConfig::Board::XteinkX4);
+    if (isX3) runX3RtcBatteryDiagnostic();
     freeink::applyXteinkDisplayController();
     Serial.printf("Display controller: %s\n", displayControllerName(BoardConfig::ACTIVE.displayController));
+
+    const auto controller = [&] {
+      switch (BoardConfig::ACTIVE.displayController) {
+        case BoardConfig::DisplayController::UC8253: return tamaink::board::Controller::Uc8253;
+        case BoardConfig::DisplayController::SSD1677: return tamaink::board::Controller::Ssd1677;
+        case BoardConfig::DisplayController::UC8279: return tamaink::board::Controller::Uc8279d;
+        case BoardConfig::DisplayController::UC8179: return tamaink::board::Controller::Uc8179;
+        default: return tamaink::board::Controller::Unknown;
+      }
+    }();
+    const auto decision = tamaink::board::validate(
+        isX3 ? tamaink::board::Family::X3 : tamaink::board::Family::X4, controller);
+    Serial.printf("Board policy: %s\n", decision.message);
+    if (!decision.accepted()) {
+      Serial.println("Boot stopped before emulator/display initialization.");
+      return;
+    }
 
     if (!SdMan.begin()) {
       Serial.println("Emulator: SD mount failed; continuing hardware diagnostics");
@@ -1315,6 +1340,11 @@ void setup() {
       if (hadDeferredWakeCatchup && rendererStarted && rendererEnabled &&
           enqueueRenderer() == pdPASS)
         rendererDispatch.queued(millis());
+      return;
+    }
+
+    if (!isX3) {
+      Serial.println("X4 board accepted; display stage pending (SSD1677 renderer not implemented).");
       return;
     }
 
@@ -1363,7 +1393,7 @@ void setup() {
     Serial.println("Persistence gate: p=begin live save, n=advance phase (repeat), c=corrupt newest, x=cleanup owned state paths");
     beginInputDiagnostic();
   } else {
-    Serial.println("Board detection stopped; display pins untouched.");
+    Serial.println("Board detection rejected: inconclusive X3/X4 fingerprint; display pins untouched.");
   }
 }
 
