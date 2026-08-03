@@ -1,6 +1,7 @@
 #include "tamaink_renderer_refresh.h"
 #include <cassert>
 #include <cstdint>
+#include <initializer_list>
 
 using tamaink::render::RefreshCadence;
 using tamaink::render::RefreshKind;
