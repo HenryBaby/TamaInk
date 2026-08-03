@@ -98,8 +98,21 @@ int main() {
   assert(logicalBlack(frame, 155, 477));
   assert(nativeBlack(frame, 477, 372));
 
+  // X4 portrait geometry (800x480 native) uses the same centered composition
+  // and must remain bounded by the framebuffer.
+  constexpr int x4Width = 800, x4Height = 480, x4Stride = 100;
+  std::vector<std::uint8_t> x4(static_cast<std::size_t>(x4Stride) * x4Height, 0);
+  assert(tamaink::sleep_screen::render(x4.data(), x4.size(), x4Width, x4Height, x4Stride) == Status::Ok);
+  // Upper sleep-Z landmark: logical (278,242) maps CCW to native (242,201).
+  assert((x4[201u * x4Stride + 242u / 8u] & (0x80u >> (242u & 7u))) == 0);
+  for (int y = 0; y < x4Height; ++y) {
+    assert((x4[static_cast<std::size_t>(y) * x4Stride] & 0x80u) == 0x80u);
+  }
+
   assert(tamaink::sleep_screen::render(nullptr, kBytes, kNativeWidth, kNativeHeight, kStride) ==
          Status::InvalidArgument);
+  expectRejectedWithoutWrite(Status::InvalidArgument, 792, 480, 100, 48000);
+  expectRejectedWithoutWrite(Status::InvalidArgument, 800, 528, 100, 52800);
   expectRejectedWithoutWrite(Status::InvalidArgument, 528, 792, kStride, kBytes);
   expectRejectedWithoutWrite(Status::InvalidArgument, kNativeWidth, kNativeHeight, 98, kBytes);
   expectRejectedWithoutWrite(Status::InvalidArgument, kNativeWidth, kNativeHeight, kStride, kBytes - 1);

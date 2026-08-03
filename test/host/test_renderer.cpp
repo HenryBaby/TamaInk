@@ -182,6 +182,27 @@ int main() {
     tamaink::render::BatteryStatus{true, 97, false}) == Status::Ok);
   assert(!physicalBlack(8, 17) && !physicalBlack(96, 18)); // battery setting hidden
 
+  // X4 geometry: centered LCD, all bottom-row markers, battery and sentinels.
+  constexpr unsigned x4Width = 800, x4Height = 480, x4Stride = 100;
+  std::vector<std::uint8_t> x4(x4Stride * x4Height + 7, 0xA5);
+  tamaink::tamalib::Snapshot x4Frame{}; x4Frame.lcd[0] = 1u << 31; x4Frame.icons = 0xFF;
+  const unsigned x4Origin = (x4Width - 256) / 2;
+  assert(tamaink::render::snapshot(x4Frame, x4.data(), x4Stride * x4Height, x4Width, x4Height, x4Stride,
+                                   x4Origin, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
+                                   tamaink::render::BatteryStatus{true, 97}) == Status::Ok);
+  assert(black(x4, x4Stride, x4Origin, 8));
+  for (unsigned bit = 0; bit < 8; ++bit) {
+    const unsigned x0 = x4Width - 48, y0 = 16 + (7 - bit) * ((x4Height - 32 - 48) / 7);
+    bool visible = false;
+    for (unsigned y = y0 + 9; y < y0 + 39; ++y)
+      for (unsigned x = x0 + 9; x < x0 + 39; ++x) visible = visible || black(x4, x4Stride, x, y);
+    assert(visible);
+    assert(!black(x4, x4Stride, x0 - 1, y0 + 24));
+  }
+  const auto x4PhysicalBlack = [&](unsigned px, unsigned py) { return black(x4, x4Stride, py, x4Height - 1 - px); };
+  assert(x4PhysicalBlack(8, 17) && x4PhysicalBlack(96, 18));
+  for (unsigned i = 0; i < 7; ++i) assert(x4[x4Stride * x4Height + i] == 0xA5);
+
   // Settings overlay is centered in logical portrait coordinates and maps to
   // native coordinates without touching the surrounding framebuffer.
   std::vector<std::uint8_t> menu(x3Stride * x3Height, 0xFF);
@@ -216,5 +237,13 @@ int main() {
   assert(confirmNo != confirmYes);  // selection visibly moves between NO and YES
   assert(tamaink::render::overlaySettings(confirmNo.data(), confirmNo.size(), x3Width, x3Height,
                                           x3Stride, menuValues, 5) == Status::InvalidArgument);
+
+  std::vector<std::uint8_t> x4Menu(x4Stride * x4Height + 3, 0xA5);
+  assert(tamaink::render::overlaySettings(x4Menu.data(), x4Stride * x4Height, x4Width, x4Height,
+                                          x4Stride, menuValues, 0) == Status::Ok);
+  assert(black(x4Menu, x4Stride, 240, 455)); // centered popup left edge
+  assert(tamaink::render::overlaySettings(x4Menu.data(), x4Stride * x4Height, x4Width, x4Height,
+                                          x4Stride, menuValues, 3, true, true) == Status::Ok);
+  assert(x4Menu[x4Stride * x4Height] == 0xA5 && x4Menu[x4Stride * x4Height + 2] == 0xA5);
   return 0;
 }
