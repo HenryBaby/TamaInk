@@ -429,6 +429,10 @@ bool startEmulator() {
       persistenceSlot = slot; persistenceGeneration = persistenceBootRecord[slot].generation; resumed = true;
       Serial.printf("Persistence: resumed generation=%lu from slot %c\n", static_cast<unsigned long>(persistenceGeneration), 'A' + slot);
       if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+        if (!BoardConfig::hasRtc()) {
+          Serial.println("Wake: RTC not present on X4; emulated time paused, no elapsed advancement");
+          continue;
+        }
         std::uint64_t saved = 0, nowRtc = 0;
         const bool sv = tamaink::rtc::decodeTagged(persistenceBootRecord[slot].timestamp, saved);
         const bool cv = readRtcEpoch(nowRtc);
@@ -731,7 +735,7 @@ bool initializeSharedSpi() {
   return true;
 }
 
-bool readX3RtcRegister(uint8_t reg, uint8_t& value) {
+bool readRtcRegister(uint8_t reg, uint8_t& value) {
   const auto& sensor = BoardConfig::ACTIVE.sensors;
   if (sensor.rtcAddr == 0 || sensor.i2cSda < 0 || sensor.i2cScl < 0 || sensor.i2cHz == 0) return false;
   Wire.begin(sensor.i2cSda, sensor.i2cScl, sensor.i2cHz);
@@ -744,7 +748,7 @@ bool readX3RtcRegister(uint8_t reg, uint8_t& value) {
   return true;
 }
 
-bool readX3RtcTime(uint8_t raw[7]) {
+bool readRtcTime(uint8_t raw[7]) {
   const auto& sensor = BoardConfig::ACTIVE.sensors;
   if (sensor.rtcAddr == 0 || sensor.i2cSda < 0 || sensor.i2cScl < 0 || sensor.i2cHz == 0) return false;
   Wire.begin(sensor.i2cSda, sensor.i2cScl, sensor.i2cHz);
@@ -757,21 +761,21 @@ bool readX3RtcTime(uint8_t raw[7]) {
   return true;
 }
 
-bool readRtcEpoch(std::uint64_t& epoch) { uint8_t raw[7]{}; tamaink::rtc::DateTime dt{}; return readX3RtcTime(raw) && tamaink::rtc::decodeDs3231(raw, dt, epoch); }
+bool readRtcEpoch(std::uint64_t& epoch) { uint8_t raw[7]{}; tamaink::rtc::DateTime dt{}; return readRtcTime(raw) && tamaink::rtc::decodeDs3231(raw, dt, epoch); }
 
-void runX3RtcBatteryDiagnostic() {
+void runRtcBatteryDiagnostic() {
   Serial.println("RTC diagnostic: read-only DS3231 check");
   if (!BoardConfig::hasRtc()) {
-    Serial.println("RTC: unavailable");
+    Serial.printf("RTC: not present on %s\n", BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX4 ? "X4" : "selected board");
   } else {
     uint8_t status = 0;
-    if (!readX3RtcRegister(0x0F, status)) {
+    if (!readRtcRegister(0x0F, status)) {
       Serial.println("RTC: unavailable/I2C failure");
     } else if ((status & 0x80U) != 0) {
       Serial.println("RTC: present but oscillator-stopped (OSF)");
     } else {
       uint8_t raw[7] = {};
-      if (!readX3RtcTime(raw)) {
+      if (!readRtcTime(raw)) {
         Serial.println("RTC: unavailable/I2C failure");
       } else {
         tamaink::rtc::DateTime dt{}; std::uint64_t epoch = 0;
@@ -1309,7 +1313,7 @@ void setup() {
     // Resolve the runtime profile and controller before touching SD/display.
     const bool isX3 = boardVerdict == freeink::XteinkVerdict::X3Confirmed;
     BoardConfig::selectDevice(isX3 ? BoardConfig::Board::XteinkX3 : BoardConfig::Board::XteinkX4);
-    if (isX3) runX3RtcBatteryDiagnostic();
+    runRtcBatteryDiagnostic();
     freeink::applyXteinkDisplayController();
     Serial.printf("Display controller: %s\n", displayControllerName(BoardConfig::ACTIVE.displayController));
 
