@@ -103,6 +103,8 @@ int main() {
   constexpr int x4Width = 800, x4Height = 480, x4Stride = 100;
   std::vector<std::uint8_t> x4(static_cast<std::size_t>(x4Stride) * x4Height, 0);
   assert(tamaink::sleep_screen::render(x4.data(), x4.size(), x4Width, x4Height, x4Stride) == Status::Ok);
+  // Upper sleep-Z landmark: logical (278,242) maps CCW to native (242,201).
+  assert((x4[201u * x4Stride + 242u / 8u] & (0x80u >> (242u & 7u))) == 0);
   for (int y = 0; y < x4Height; ++y) {
     assert((x4[static_cast<std::size_t>(y) * x4Stride] & 0x80u) == 0x80u);
   }

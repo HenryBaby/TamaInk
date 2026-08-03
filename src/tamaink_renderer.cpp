@@ -47,8 +47,9 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
   }
   if (iconLayout == IconLayout::P1BottomRow) {
     const std::int64_t markerSide = scale * 3ll;
-    const std::int64_t markerStep = scale * 4ll;
-    const std::int64_t markerY = static_cast<std::int64_t>(originY) + scale / 2ll;
+    // Preserve X3's 64px pitch while fitting all eight 48px markers on X4.
+    const std::int64_t markerY = 16;
+    const std::int64_t markerStep = (static_cast<std::int64_t>(height) - 32ll - markerSide) / 7ll;
     const std::int64_t markerX = static_cast<std::int64_t>(width) - markerSide;
     auto pixel = [&](std::int64_t x, std::int64_t y, bool black) {
       if (x < 0 || y < 0 || x >= width || y >= height) return;
