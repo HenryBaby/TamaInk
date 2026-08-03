@@ -8,50 +8,50 @@
 namespace tamaink::sleep_screen {
 namespace {
 
-constexpr int kLogicalWidth = 528;
-constexpr int kLogicalHeight = 792;
-
-void drawPixel(std::uint8_t* buffer, std::size_t stride, int logicalX, int logicalY) {
-  if (logicalX < 0 || logicalX >= kLogicalWidth || logicalY < 0 || logicalY >= kLogicalHeight) return;
+void drawPixel(std::uint8_t* buffer, std::size_t stride, int logicalWidth, int logicalHeight,
+               int logicalX, int logicalY) {
+  if (logicalX < 0 || logicalX >= logicalWidth || logicalY < 0 || logicalY >= logicalHeight) return;
   const int nativeX = logicalY;
-  const int nativeY = kLogicalWidth - 1 - logicalX;
+  const int nativeY = logicalWidth - 1 - logicalX;
   auto& byte = buffer[static_cast<std::size_t>(nativeY) * stride + static_cast<std::size_t>(nativeX) / 8u];
   byte &= static_cast<std::uint8_t>(~(0x80u >> (nativeX & 7)));
 }
 
-void drawHorizontal(std::uint8_t* buffer, std::size_t stride, int x, int y, int width, int thickness) {
+void drawHorizontal(std::uint8_t* buffer, std::size_t stride, int logicalWidth, int logicalHeight, int x, int y, int width, int thickness) {
   for (int py = 0; py < thickness; ++py) {
-    for (int px = 0; px < width; ++px) drawPixel(buffer, stride, x + px, y + py);
+    for (int px = 0; px < width; ++px) drawPixel(buffer, stride, logicalWidth, logicalHeight, x + px, y + py);
   }
 }
 
-void drawVertical(std::uint8_t* buffer, std::size_t stride, int x, int y, int height, int thickness) {
+void drawVertical(std::uint8_t* buffer, std::size_t stride, int logicalWidth, int logicalHeight, int x, int y, int height, int thickness) {
   for (int px = 0; px < thickness; ++px) {
-    for (int py = 0; py < height; ++py) drawPixel(buffer, stride, x + px, y + py);
+    for (int py = 0; py < height; ++py) drawPixel(buffer, stride, logicalWidth, logicalHeight, x + px, y + py);
   }
 }
 
-void drawClosedEye(std::uint8_t* buffer, std::size_t stride, int centerX, int y) {
-  drawVertical(buffer, stride, centerX - 12, y, 7, 4);
-  drawHorizontal(buffer, stride, centerX - 8, y + 6, 16, 4);
-  drawVertical(buffer, stride, centerX + 8, y, 7, 4);
+void drawClosedEye(std::uint8_t* buffer, std::size_t stride, int logicalWidth, int logicalHeight, int centerX, int y) {
+  drawVertical(buffer, stride, logicalWidth, logicalHeight, centerX - 12, y, 7, 4);
+  drawHorizontal(buffer, stride, logicalWidth, logicalHeight, centerX - 8, y + 6, 16, 4);
+  drawVertical(buffer, stride, logicalWidth, logicalHeight, centerX + 8, y, 7, 4);
 }
 
-void drawSleepZ(std::uint8_t* buffer, std::size_t stride, int x, int y) {
-  drawHorizontal(buffer, stride, x, y, 18, 4);
+void drawSleepZ(std::uint8_t* buffer, std::size_t stride, int logicalWidth, int logicalHeight, int x, int y) {
+  drawHorizontal(buffer, stride, logicalWidth, logicalHeight, x, y, 18, 4);
   for (int step = 0; step < 5; ++step) {
-    drawHorizontal(buffer, stride, x + 12 - step * 3, y + 4 + step * 3, 6, 4);
+    drawHorizontal(buffer, stride, logicalWidth, logicalHeight, x + 12 - step * 3, y + 4 + step * 3, 6, 4);
   }
-  drawHorizontal(buffer, stride, x, y + 19, 18, 4);
+  drawHorizontal(buffer, stride, logicalWidth, logicalHeight, x, y + 19, 18, 4);
 }
 
-void drawSleepingFace(std::uint8_t* buffer, std::size_t stride) {
+void drawSleepingFace(std::uint8_t* buffer, std::size_t stride, int logicalWidth, int logicalHeight) {
   // Minimal reference composition: two closed eyes with a pair of rising,
   // stepped sleep symbols. There is intentionally no enclosing body or egg.
-  drawSleepZ(buffer, stride, 302, 238);
-  drawSleepZ(buffer, stride, 286, 274);
-  drawClosedEye(buffer, stride, 236, 330);
-  drawClosedEye(buffer, stride, 292, 330);
+  const int cx = logicalWidth / 2;
+  const int top = (logicalHeight - 792) / 2 + 238;
+  drawSleepZ(buffer, stride, logicalWidth, logicalHeight, cx + 38, top);
+  drawSleepZ(buffer, stride, logicalWidth, logicalHeight, cx + 22, top + 36);
+  drawClosedEye(buffer, stride, logicalWidth, logicalHeight, cx - 28, top + 92);
+  drawClosedEye(buffer, stride, logicalWidth, logicalHeight, cx + 28, top + 92);
 }
 
 const freeink::ui::FontGlyph* fontGlyph(char character) {
@@ -74,10 +74,10 @@ int textWidth(const char* text, int scale, int tracking) {
   return width;
 }
 
-void drawText(std::uint8_t* buffer, std::size_t stride, int baseline, const char* text, int scale, int tracking,
+void drawText(std::uint8_t* buffer, std::size_t stride, int logicalWidth, int logicalHeight, int baseline, const char* text, int scale, int tracking,
               bool heavy) {
   const auto& font = freeink::ui::kNotoSansFont;
-  int penX = (kLogicalWidth - textWidth(text, scale, tracking)) / 2;
+  int penX = (logicalWidth - textWidth(text, scale, tracking)) / 2;
   bool first = true;
 
   for (const char* cursor = text; *cursor; ++cursor) {
@@ -95,10 +95,10 @@ void drawText(std::uint8_t* buffer, std::size_t stride, int baseline, const char
           for (int pixelX = 0; pixelX < scale; ++pixelX) {
             const int x = penX + glyph->xOffset * scale + glyphX * scale + pixelX;
             const int y = baseline + glyph->yOffset * scale + glyphY * scale + pixelY;
-            drawPixel(buffer, stride, x, y);
+            drawPixel(buffer, stride, logicalWidth, logicalHeight, x, y);
             if (heavy) {
-              drawPixel(buffer, stride, x + 1, y);
-              drawPixel(buffer, stride, x, y + 1);
+              drawPixel(buffer, stride, logicalWidth, logicalHeight, x + 1, y);
+              drawPixel(buffer, stride, logicalWidth, logicalHeight, x, y + 1);
             }
           }
         }
@@ -112,7 +112,9 @@ void drawText(std::uint8_t* buffer, std::size_t stride, int baseline, const char
 
 Status render(std::uint8_t* destination, std::size_t capacity, std::uint16_t width, std::uint16_t height,
               std::size_t stride) {
-  if (!destination || width != 792 || height != 528 || stride < (width + 7u) / 8u) {
+  const bool supportedGeometry = (width == 792 && height == 528) || (width == 800 && height == 480);
+  if (!destination || !supportedGeometry ||
+      stride < (width + 7u) / 8u) {
     return Status::InvalidArgument;
   }
   if (height > std::numeric_limits<std::size_t>::max() / stride) return Status::Overflow;
@@ -120,9 +122,9 @@ Status render(std::uint8_t* destination, std::size_t capacity, std::uint16_t wid
   if (bytes > capacity) return Status::InvalidArgument;
 
   std::memset(destination, 0xFF, bytes);
-  drawSleepingFace(destination, stride);
-  drawText(destination, stride, 513, "TamaInk", 2, 4, true);
-  drawText(destination, stride, 555, "SLEEPING", 1, 8, false);
+  drawSleepingFace(destination, stride, height, width);
+  drawText(destination, stride, height, width, static_cast<int>(width) - 279, "TamaInk", 2, 4, true);
+  drawText(destination, stride, height, width, static_cast<int>(width) - 237, "SLEEPING", 1, 8, false);
   return Status::Ok;
 }
 

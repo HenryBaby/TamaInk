@@ -167,9 +167,12 @@ void rendererTask(void*) {
     }
     const std::uint8_t threshold = tamaink::settings::cleaningThreshold(packet.settings.display);
     cadence.setThreshold(threshold);
+    const auto displayWidth = rendererDisplay->getDisplayWidth();
+    const auto displayHeight = rendererDisplay->getDisplayHeight();
+    const std::int32_t lcdOriginX = (static_cast<std::int32_t>(displayWidth) - 16 * 16) / 2;
     const auto status = tamaink::render::snapshot(packet.frame, rendererDisplay->getFrameBuffer(),
-        rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
-        rendererDisplay->getDisplayWidthBytes(), 268, 8, 16, tamaink::render::Rotation::CounterClockwise90,
+        rendererDisplay->getBufferSize(), displayWidth, displayHeight,
+        rendererDisplay->getDisplayWidthBytes(), lcdOriginX, 8, 16, tamaink::render::Rotation::CounterClockwise90,
         tamaink::render::IconLayout::P1BottomRow,
         tamaink::render::BatteryStatus{packet.batteryKnown, packet.battery,
           packet.settings.battery == tamaink::settings::Battery::Show});
