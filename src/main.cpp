@@ -1371,7 +1371,7 @@ void setup() {
     }
 
     if (!isX3) {
-      Serial.println("X4 board accepted; display stage pending (SSD1677 renderer not implemented).");
+      Serial.println("X4 SSD1677 renderer supported; standalone display diagnostic unavailable after emulator startup failure.");
       return;
     }
 
@@ -1420,7 +1420,7 @@ void setup() {
     Serial.println("Persistence gate: p=begin live save, n=advance phase (repeat), c=corrupt newest, x=cleanup owned state paths");
     beginInputDiagnostic();
   } else {
-    Serial.println("Board detection rejected: inconclusive X3/X4 fingerprint; display pins untouched.");
+    Serial.println("Board detection rejected: ambiguous X3/X4 fingerprint; refusing unsafe controller fallback; display pins untouched.");
   }
 }
 

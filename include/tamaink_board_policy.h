@@ -19,7 +19,7 @@ struct Rule { Family family; Controller controller; State state; const char* mes
 // a validated controller later is one status change plus its focused test.
 constexpr Rule kRules[] = {
     {Family::X3, Controller::Uc8253, State::Supported, "X3 UC8253 accepted"},
-    {Family::X4, Controller::Ssd1677, State::Supported, "X4 SSD1677 accepted (display renderer pending)"},
+    {Family::X4, Controller::Ssd1677, State::Supported, "X4 SSD1677 accepted"},
     {Family::X3, Controller::Uc8279d, State::DisabledPendingValidation, "X3 UC8279d disabled pending validation"},
     {Family::X4, Controller::Uc8179, State::DisabledPendingValidation, "X4 UC8179 disabled pending validation"},
 };
