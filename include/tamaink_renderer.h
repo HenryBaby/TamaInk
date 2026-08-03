@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "tamaink_tamalib.h"
+#include "tamaink_settings.h"
 
 namespace tamaink::render {
 
@@ -13,6 +14,7 @@ enum class IconLayout : std::uint8_t { None, P1BottomRow };
 struct BatteryStatus {
   bool percentageKnown = false;
   std::uint8_t percentage = 0;
+  bool visible = true;
 };
 
 // Renders the 32x16 Tama LCD into a caller-owned 1bpp, row-major,
@@ -26,5 +28,12 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
                std::uint16_t scale, Rotation rotation = Rotation::None,
                IconLayout iconLayout = IconLayout::None,
                BatteryStatus battery = {});
+
+// Composites a centered settings popup into an already-rendered framebuffer.
+Status overlaySettings(std::uint8_t* destination, std::size_t capacity,
+                       std::uint16_t width, std::uint16_t height,
+                       std::size_t stride, const settings::Values& values,
+                       std::uint8_t focus, bool confirmation = false,
+                       bool resetYes = false);
 
 } // namespace tamaink::render

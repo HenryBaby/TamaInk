@@ -1,4 +1,5 @@
 #include "tamaink_renderer.h"
+#include "tamaink_settings.h"
 #include <cassert>
 #include <cstdint>
 #include <algorithm>
@@ -143,8 +144,10 @@ int main() {
   assert(physicalBlack(80, 28) && physicalBlack(87, 35));
   assert(!physicalBlack(250, 31) && !physicalBlack(300, 31)); // no divider
   for (unsigned bar = 0; bar < 5; ++bar) assert(physicalBlack(16 + bar * 12 + 2, 32));
-  assert(physicalBlack(96, 17) && physicalBlack(132, 17)); // 30px-tall 97 digits
-  // 9 and 7 use 3x5 glyphs at scale 6; no third glyph follows 97.
+  assert(!physicalBlack(96, 17) && !physicalBlack(132, 17)); // digits inset above
+  assert(physicalBlack(96, 18) && physicalBlack(132, 18)); // 28px-tall 97 digits
+  assert(physicalBlack(96, 45) && !physicalBlack(96, 46)); // digits inset below
+  // 9 and 7 use 3x5 glyphs scaled to 18x28; no third glyph follows 97.
   assert(!physicalBlack(96, 35) && physicalBlack(108, 35));
   assert(!physicalBlack(120, 23) && physicalBlack(132, 23));
   assert(!physicalBlack(144, 17));
@@ -163,7 +166,7 @@ int main() {
   assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
     268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
     tamaink::render::BatteryStatus{true, 100}) == Status::Ok);
-  assert(physicalBlack(102, 17) && physicalBlack(120, 17) && physicalBlack(144, 17));
+  assert(physicalBlack(102, 18) && physicalBlack(120, 18) && physicalBlack(144, 18));
   std::fill(statusBar.begin(), statusBar.end(), 0xFF);
   assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
     268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
@@ -173,5 +176,45 @@ int main() {
   assert(!black(statusBar, x3Stride, 100, 500)); // bounds
   assert(!black(statusBar, x3Stride, 300, 100));
   assert(!black(statusBar, x3Stride, 744, 16));
+  std::fill(statusBar.begin(), statusBar.end(), 0xFF);
+  assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
+    268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
+    tamaink::render::BatteryStatus{true, 97, false}) == Status::Ok);
+  assert(!physicalBlack(8, 17) && !physicalBlack(96, 18)); // battery setting hidden
+
+  // Settings overlay is centered in logical portrait coordinates and maps to
+  // native coordinates without touching the surrounding framebuffer.
+  std::vector<std::uint8_t> menu(x3Stride * x3Height, 0xFF);
+  tamaink::settings::Values menuValues{};
+  assert(tamaink::render::overlaySettings(menu.data(), menu.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 0) == Status::Ok);
+  const auto menuLogicalBlack = [&](unsigned x, unsigned y) {
+    return black(menu, x3Stride, y, x3Height - 1u - x);
+  };
+  assert(menuLogicalBlack(60, 294) && menuLogicalBlack(60, 329));
+  assert(!menuLogicalBlack(60, 330)); // highlight ends before the next 48px row
+  unsigned minX = x3Width, maxX = 0, minY = x3Height, maxY = 0, ink = 0;
+  for (unsigned y = 0; y < x3Height; ++y)
+    for (unsigned x = 0; x < x3Width; ++x)
+      if (black(menu, x3Stride, x, y)) { minX = std::min(minX, x); maxX = std::max(maxX, x); minY = std::min(minY, y); maxY = std::max(maxY, y); ++ink; }
+  assert(ink > 1000 && minX >= 216 && maxX <= 575 && minY >= 48 && maxY <= 479);
+  std::vector<std::uint8_t> menuFocus(menu.size(), 0xFF);
+  assert(tamaink::render::overlaySettings(menuFocus.data(), menuFocus.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 1) == Status::Ok);
+  assert(menuFocus != menu);
+  menuValues.display = tamaink::settings::Display::Eco;
+  std::vector<std::uint8_t> menuValue(menu.size(), 0xFF);
+  assert(tamaink::render::overlaySettings(menuValue.data(), menuValue.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 1) == Status::Ok);
+  assert(menuValue != menuFocus);
+  std::vector<std::uint8_t> confirmNo(menu.size(), 0xFF);
+  std::vector<std::uint8_t> confirmYes(menu.size(), 0xFF);
+  assert(tamaink::render::overlaySettings(confirmNo.data(), confirmNo.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 3, true, false) == Status::Ok);
+  assert(tamaink::render::overlaySettings(confirmYes.data(), confirmYes.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 3, true, true) == Status::Ok);
+  assert(confirmNo != confirmYes);  // selection visibly moves between NO and YES
+  assert(tamaink::render::overlaySettings(confirmNo.data(), confirmNo.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 5) == Status::InvalidArgument);
   return 0;
 }

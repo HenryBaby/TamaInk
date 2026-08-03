@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - main
+      - dev
   workflow_dispatch:
     inputs:
       run_name:
@@ -62,6 +63,8 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_wake_catchup.cpp test/host/test_wake_catchup.cpp -o /tmp/tamaink-wake-catchup-tests && /tmp/tamaink-wake-catchup-tests
       - name: Run adapter clock policy host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_clock.cpp test/host/test_clock.cpp -o /tmp/tamaink-clock-tests && /tmp/tamaink-clock-tests
+      - name: Run settings controller host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_settings.cpp test/host/test_settings.cpp -o /tmp/tamaink-settings-tests && /tmp/tamaink-settings-tests
 
       - name: Run ROM validation host sanitizer tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_rom.cpp test/host/test_rom.cpp -o /tmp/tamaink-rom-tests && /tmp/tamaink-rom-tests
@@ -79,7 +82,7 @@ jobs:
         run: bash test/host/run_emulator_state_tests.sh
 
       - name: Run LCD renderer host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer.cpp test/host/test_renderer.cpp -o /tmp/tamaink-renderer-tests && /tmp/tamaink-renderer-tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer.cpp src/tamaink_settings.cpp test/host/test_renderer.cpp -o /tmp/tamaink-renderer-tests && /tmp/tamaink-renderer-tests
       - name: Run renderer periodic cleaning host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer_refresh.cpp test/host/renderer_refresh_test.cpp -o /tmp/tamaink-renderer-refresh-tests && /tmp/tamaink-renderer-refresh-tests
       - name: Run renderer dispatch host tests
