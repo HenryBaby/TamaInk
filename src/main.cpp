@@ -27,6 +27,8 @@
 #include "tamaink_wake_catchup.h"
 #include "tamaink_battery_telemetry.h"
 #include "tamaink_low_battery_sleep.h"
+#include "tamaink_settings.h"
+#include <Preferences.h>
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -64,12 +66,44 @@ bool emulatorObservedValid = false;
 bool serialFramePending = false;
 bool serialLcdFramesEnabled = false;
 tamaink::autosave::Controller autosaveController{};
-constexpr uint32_t AUTOSAVE_INTERVAL_MS = 15UL * 60UL * 1000UL;
+tamaink::settings::Controller settingsController;
+uint32_t autosaveInterval() {
+  return tamaink::settings::autosaveIntervalMs(settingsController.values().autosave);
+}
+uint32_t lcdInterval() {
+  return tamaink::settings::displayIntervalMs(settingsController.values().display);
+}
 constexpr uint32_t AUTOSAVE_RETRY_MS = 60UL * 1000UL;
 tamaink::render::FrameDispatch rendererDispatch;
+Preferences settingsPrefs;
 unsigned long emulatorLastPrintAt = 0;
 EInkDisplay* rendererDisplay = nullptr;
 QueueHandle_t rendererQueue = nullptr;
+struct RenderPacket {
+  tamaink::tamalib::Snapshot frame{};
+  tamaink::settings::Values settings{};
+  bool menu = false;
+  std::uint8_t focus = 0;
+  bool batteryKnown = false;
+  std::uint8_t battery = 0;
+  bool forceFull = false;
+};
+bool rendererForceFull = false;
+RenderPacket makeRenderPacket() {
+  return {emulatorSnapshot, settingsController.values(), settingsController.open(),
+          settingsController.focus(), batteryPercentageKnown, batteryPercentage,
+          rendererForceFull};
+}
+BaseType_t enqueueRenderer() {
+  RenderPacket packet = makeRenderPacket();
+  RenderPacket queued{};
+  if (xQueuePeek(rendererQueue, &queued, 0) == pdTRUE)
+    packet.forceFull = tamaink::render::preserveFullRefresh(queued.forceFull,
+                                                            packet.forceFull);
+  const BaseType_t result = xQueueOverwrite(rendererQueue, &packet);
+  if (result == pdPASS) rendererForceFull = false;
+  return result;
+}
 TaskHandle_t rendererTaskHandle = nullptr;
 SemaphoreHandle_t rendererStopped = nullptr;
 SemaphoreHandle_t rendererFirstFrameDone = nullptr;
@@ -99,12 +133,12 @@ extern tamaink::emulator::State persistenceBootState;
 extern uint8_t persistenceCandidate[tamaink::persist::kHeaderSize + tamaink::persist::kMaxPayload];
 
 void rendererTask(void*) {
-  tamaink::tamalib::Snapshot frame{};
+  RenderPacket packet{};
   bool first = true;
   tamaink::render::RefreshCadence cadence;
   unsigned long lastRefresh = 0;
   for (;;) {
-    if (xQueueReceive(rendererQueue, &frame, pdMS_TO_TICKS(20)) != pdTRUE) {
+    if (xQueueReceive(rendererQueue, &packet, pdMS_TO_TICKS(20)) != pdTRUE) {
       if (rendererStopRequested) break;
       continue;
     }
@@ -118,21 +152,28 @@ void rendererTask(void*) {
     const unsigned long now = millis();
     if (!first && now - lastRefresh < RENDERER_MIN_REFRESH_INTERVAL_MS)
       vTaskDelay(pdMS_TO_TICKS(RENDERER_MIN_REFRESH_INTERVAL_MS - (now - lastRefresh)));
-    tamaink::tamalib::Snapshot newest{};
-    while (xQueueReceive(rendererQueue, &newest, 0) == pdTRUE) frame = newest;
-    const auto status = tamaink::render::snapshot(frame, rendererDisplay->getFrameBuffer(),
+    RenderPacket newest{};
+    while (xQueueReceive(rendererQueue, &newest, 0) == pdTRUE) {
+      newest.forceFull = tamaink::render::preserveFullRefresh(packet.forceFull,
+                                                              newest.forceFull);
+      packet = newest;
+    }
+    const std::uint8_t threshold = tamaink::settings::cleaningThreshold(packet.settings.display);
+    cadence.setThreshold(threshold);
+    const auto status = tamaink::render::snapshot(packet.frame, rendererDisplay->getFrameBuffer(),
         rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(),
         rendererDisplay->getDisplayWidthBytes(), 268, 8, 16, tamaink::render::Rotation::CounterClockwise90,
         tamaink::render::IconLayout::P1BottomRow,
-        tamaink::render::BatteryStatus{batteryPercentageKnown, batteryPercentage});
+        tamaink::render::BatteryStatus{packet.batteryKnown, packet.battery,
+          packet.settings.battery == tamaink::settings::Battery::Show});
     if (status != tamaink::render::Status::Ok) {
       Serial.println("Display renderer: frame geometry rejected");
       if (first) { rendererFirstFrameConfirmed = false; if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone); }
       continue;
     }
-    const auto kind = cadence.next();
-    const bool periodicPromotion = !first && kind == tamaink::render::RefreshKind::Full &&
-                                   cadence.fastFrames() == tamaink::render::RefreshCadence::kFastFramesBeforeFull;
+    if (packet.menu) tamaink::render::overlaySettings(rendererDisplay->getFrameBuffer(), rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(), rendererDisplay->getDisplayWidthBytes(), packet.settings, packet.focus);
+    const auto kind = packet.forceFull ? tamaink::render::RefreshKind::Full : cadence.next();
+    const bool periodicPromotion = !first && kind == tamaink::render::RefreshKind::Full && !packet.forceFull;
     rendererDisplay->displayBuffer(kind == tamaink::render::RefreshKind::Full ? EInkDisplay::FULL_REFRESH
                                                                                 : EInkDisplay::FAST_REFRESH,
                                     false);
@@ -143,7 +184,9 @@ void rendererTask(void*) {
       rendererFirstFrameConfirmed = !rendererDisplay->refreshBusy();
       if (rendererFirstFrameConfirmed) rendererDisplay->skipInitialResync();
       if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone);
-    } else if (periodicPromotion) Serial.println("Display renderer: periodic full refresh after 64 fast frames");
+    } else if (periodicPromotion) {
+      Serial.printf("Display renderer: periodic full refresh after %u fast frames\n", threshold);
+    }
     lastRefresh = millis(); first = false;
     if (rendererStopRequested) break;
     vTaskDelay(1);
@@ -183,7 +226,7 @@ bool startRenderer() {
   rendererDisplay->begin();
   rendererBegun = true;
   if (!rendererDisplay->framebufferReady()) { Serial.println("Display renderer: framebuffer allocation failed"); stopRenderer(); return false; }
-  rendererQueue = xQueueCreate(1, sizeof(tamaink::tamalib::Snapshot));
+  rendererQueue = xQueueCreate(1, sizeof(RenderPacket));
   if (!rendererQueue) { Serial.println("Display renderer: queue allocation failed"); stopRenderer(); return false; }
   rendererStopped = xSemaphoreCreateBinary();
   if (!rendererStopped) { Serial.println("Display renderer: completion semaphore allocation failed"); stopRenderer(); return false; }
@@ -233,6 +276,36 @@ void printEmulatorSnapshot(const tamaink::tamalib::Snapshot& s) {
 }
 void updateEmulatorInput() {
   inputManager.update();
+  const bool menuWasOpen = settingsController.open();
+  const auto before = settingsController.values();
+  const auto menuEvent = settingsController.update(
+      static_cast<std::uint32_t>(millis()),
+      inputManager.isPressed(InputManager::BTN_UP),
+      inputManager.wasPressed(InputManager::BTN_BACK),
+      inputManager.wasPressed(InputManager::BTN_CONFIRM),
+      inputManager.wasPressed(InputManager::BTN_POWER));
+  if (menuEvent != tamaink::settings::Controller::Event::None) {
+    rendererForceFull = menuWasOpen != settingsController.open();
+    rendererDispatch.setInterval(lcdInterval());
+    const auto& after = settingsController.values();
+    if (before.autosave != after.autosave)
+      autosaveController.arm(millis(), autosaveInterval());
+    const bool valuesChanged = before.battery != after.battery ||
+                               before.display != after.display ||
+                               before.autosave != after.autosave;
+    if (valuesChanged) {
+      std::uint8_t encoded[5]{};
+      if (tamaink::settings::encode(after, encoded, sizeof encoded) == sizeof encoded)
+        settingsPrefs.putBytes("values", encoded, sizeof encoded);
+    }
+    if (rendererEnabled && rendererQueue) {
+      enqueueRenderer();
+      rendererDispatch.queued(millis());
+    }
+  }
+  if (menuWasOpen || menuEvent != tamaink::settings::Controller::Event::None ||
+      settingsController.open())
+    return;
   const uint8_t physical[3] = {InputManager::BTN_BACK, InputManager::BTN_CONFIRM, InputManager::BTN_POWER};
   const char labels[3] = {'A', 'B', 'C'};
   for (unsigned i = 0; i < 3; ++i) {
@@ -342,7 +415,8 @@ bool startEmulator() {
   }
   if (!resumed) Serial.println("Persistence: no importable state; starting fresh");
   Serial.println("Commands: a autosave-now; b battery telemetry; B inject one unplugged-low sample (dev); l toggle LCD frames; p manual-save; n next-phase; w save+deep-sleep wake diagnostic; c corrupt-newest; x cleanup-owned-state");
-  autosaveController.arm(millis(), AUTOSAVE_INTERVAL_MS);
+  rendererDispatch.setInterval(lcdInterval());
+  autosaveController.arm(millis(), autosaveInterval());
   emulatorActive = true;
   batteryTelemetrySchedule.arm(millis());
   Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; hold BACK+POWER >=2000 ms, then release for wake diagnostic; display refresh bypassed");
@@ -916,7 +990,7 @@ void enterWakeDiagnosticSleep(tamaink::low_battery::Owner sleepOwner = tamaink::
     wakeDiagnostic.requested = false;
     Serial.println(lowBatterySleepRequested ? "Low-battery sleep canceled: power-button release timeout" : "Wake diagnostic canceled: power-button release timeout");
     if (emulatorActive && !rendererEnabled) {
-      if (startRenderer() && xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+      if (startRenderer() && enqueueRenderer() == pdPASS)
         rendererDispatch.queued(millis());
     }
     return;
@@ -950,7 +1024,7 @@ void enterWakeDiagnosticSleep(tamaink::low_battery::Owner sleepOwner = tamaink::
     Serial.println(lowBatterySleepRequested ? "Low-battery sleep canceled: final GPIO3 release/arm failed; restoring renderer" : "Wake diagnostic canceled: final GPIO3 release/arm failed; restoring renderer");
     wakeDiagnostic.armFailed(); wakeDiagnostic.requested = false;
     if (emulatorActive && !rendererEnabled && startRenderer() &&
-        xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+        enqueueRenderer() == pdPASS)
       rendererDispatch.queued(millis());
     return;
   }
@@ -1053,7 +1127,7 @@ void persistenceCommand(char c, bool internal = false) {
       persistenceGeneration = persistencePendingGeneration;
       persistenceHasSelected = true;
       persistenceState = PersistenceState::Idle;
-      autosaveController.successCommit(millis(), AUTOSAVE_INTERVAL_MS);
+      autosaveController.successCommit(millis(), autosaveInterval());
       Serial.println("Persistence commit complete and verified");
       const auto owner = saveArbiter.owner();
       if (owner == tamaink::low_battery::Owner::WakeDiagnostic) {
@@ -1083,7 +1157,7 @@ void persistenceCommand(char c, bool internal = false) {
     if (f.write(&b, 1) != 1 || !f.sync()) { f.close(); Serial.println("Persistence c failed"); return; }
     f.close(); persistenceState = PersistenceState::AwaitReset; Serial.println("Persistence newest corrupted; await physical reset"); return;
   }
-  if (c == 'x') { const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]); const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]); if (!a || !b) { Serial.println("Persistence cleanup failed"); scanPersistence(); return; } if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir); persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0; autosaveController.cleanup(millis(), AUTOSAVE_INTERVAL_MS); Serial.println("Persistence owned files cleaned"); }
+  if (c == 'x') { const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]); const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]); if (!a || !b) { Serial.println("Persistence cleanup failed"); scanPersistence(); return; } if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir); persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0; autosaveController.cleanup(millis(), autosaveInterval()); Serial.println("Persistence owned files cleaned"); }
 }
 
 void dispatchSerialCommand(char c) {
@@ -1127,6 +1201,8 @@ void dispatchSerialCommand(char c) {
 void setup() {
   Serial.begin(115200);
   delay(750);
+  settingsPrefs.begin("tamaink-ui", false);
+  std::uint8_t persisted[8]{}; const std::size_t n = settingsPrefs.getBytes("values", persisted, sizeof persisted); tamaink::settings::Values loaded{}; if (n==5 && tamaink::settings::decode(persisted,n,loaded)) settingsController.setValues(loaded);
 
   const esp_reset_reason_t resetReason = esp_reset_reason();
   Serial.printf("TamaInk %s\n", TAMAINK_VERSION);
@@ -1156,7 +1232,7 @@ void setup() {
       const bool hadDeferredWakeCatchup = wakeCatchupPending;
       const bool rendererStarted = startRenderer();
       if (rendererStarted) {
-        if (xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS) rendererDispatch.queued(millis());
+        if (enqueueRenderer() == pdPASS) rendererDispatch.queued(millis());
         if (hadDeferredWakeCatchup && rendererFirstFrameDone &&
             xSemaphoreTake(rendererFirstFrameDone, pdMS_TO_TICKS(13000)) != pdTRUE)
           Serial.println("Display renderer: first-frame completion timed out; continuing wake catch-up");
@@ -1165,7 +1241,7 @@ void setup() {
       }
       if (hadDeferredWakeCatchup) runDeferredWakeCatchup();
       if (hadDeferredWakeCatchup && rendererStarted && rendererEnabled &&
-          xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+          enqueueRenderer() == pdPASS)
         rendererDispatch.queued(millis());
       return;
     }
@@ -1257,7 +1333,7 @@ void loop() {
       serialFramePending = false;
       emulatorLastPrintAt = now;
     }
-    if (rendererEnabled && rendererDispatch.eligible(now) && xQueueOverwrite(rendererQueue, &emulatorSnapshot) == pdPASS)
+    if (rendererEnabled && rendererDispatch.eligible(now) && enqueueRenderer() == pdPASS)
       rendererDispatch.queued(now);
     delay(0);
     return;

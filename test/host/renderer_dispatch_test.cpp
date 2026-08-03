@@ -24,5 +24,17 @@ int main() {
   assert(d.eligible(0x000005d0u));
   d.reset();
   assert(!d.pending() && !d.eligible(0));
+  d.setInterval(750);
+  d.changed(false, 0);
+  assert(d.eligible(0));
+  d.queued(0);
+  d.changed(false, 1);
+  assert(!d.eligible(749));
+  assert(d.eligible(750));
+  d.setInterval(3000);
+  d.queued(1000);
+  d.changed(false, 1001);
+  assert(!d.eligible(3999));
+  assert(d.eligible(4000));
   return 0;
 }

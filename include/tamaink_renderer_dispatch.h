@@ -11,6 +11,7 @@ class FrameDispatch {
   bool eligible(std::uint32_t now) const;
   void queued(std::uint32_t now);
   void reset() { pending_ = false; urgent_ = false; hasQueued_ = false; lastQueued_ = 0; }
+  void setInterval(std::uint32_t ms) { intervalMs_ = ms; }
   bool pending() const { return pending_; }
 
  private:
@@ -18,6 +19,7 @@ class FrameDispatch {
   bool urgent_ = false;
   bool hasQueued_ = false;
   std::uint32_t lastQueued_ = 0;
+  std::uint32_t intervalMs_ = kLcdIntervalMs;
 };
 
 }  // namespace tamaink::render

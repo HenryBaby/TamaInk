@@ -9,7 +9,7 @@ void FrameDispatch::changed(bool icon, std::uint32_t now) {
 }
 
 bool FrameDispatch::eligible(std::uint32_t now) const {
-  return pending_ && (urgent_ || !hasQueued_ || static_cast<std::uint32_t>(now - lastQueued_) >= kLcdIntervalMs);
+  return pending_ && (urgent_ || !hasQueued_ || static_cast<std::uint32_t>(now - lastQueued_) >= intervalMs_);
 }
 
 void FrameDispatch::queued(std::uint32_t now) {

@@ -1,4 +1,5 @@
 #include "tamaink_renderer.h"
+#include "tamaink_settings.h"
 #include <cassert>
 #include <cstdint>
 #include <algorithm>
@@ -175,5 +176,31 @@ int main() {
   assert(!black(statusBar, x3Stride, 100, 500)); // bounds
   assert(!black(statusBar, x3Stride, 300, 100));
   assert(!black(statusBar, x3Stride, 744, 16));
+  std::fill(statusBar.begin(), statusBar.end(), 0xFF);
+  assert(tamaink::render::snapshot(empty, statusBar.data(), statusBar.size(), x3Width, x3Height, x3Stride,
+    268, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
+    tamaink::render::BatteryStatus{true, 97, false}) == Status::Ok);
+  assert(!physicalBlack(8, 17) && !physicalBlack(96, 18)); // battery setting hidden
+
+  // Settings overlay is centered in logical portrait coordinates and maps to
+  // native coordinates without touching the surrounding framebuffer.
+  std::vector<std::uint8_t> menu(x3Stride * x3Height, 0xFF);
+  tamaink::settings::Values menuValues{};
+  assert(tamaink::render::overlaySettings(menu.data(), menu.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 0) == Status::Ok);
+  unsigned minX = x3Width, maxX = 0, minY = x3Height, maxY = 0, ink = 0;
+  for (unsigned y = 0; y < x3Height; ++y)
+    for (unsigned x = 0; x < x3Width; ++x)
+      if (black(menu, x3Stride, x, y)) { minX = std::min(minX, x); maxX = std::max(maxX, x); minY = std::min(minY, y); maxY = std::max(maxY, y); ++ink; }
+  assert(ink > 1000 && minX >= 216 && maxX <= 575 && minY >= 48 && maxY <= 479);
+  std::vector<std::uint8_t> menuFocus(menu.size(), 0xFF);
+  assert(tamaink::render::overlaySettings(menuFocus.data(), menuFocus.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 1) == Status::Ok);
+  assert(menuFocus != menu);
+  menuValues.display = tamaink::settings::Display::Eco;
+  std::vector<std::uint8_t> menuValue(menu.size(), 0xFF);
+  assert(tamaink::render::overlaySettings(menuValue.data(), menuValue.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 1) == Status::Ok);
+  assert(menuValue != menuFocus);
   return 0;
 }
