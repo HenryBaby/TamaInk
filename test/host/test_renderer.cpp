@@ -202,5 +202,14 @@ int main() {
   assert(tamaink::render::overlaySettings(menuValue.data(), menuValue.size(), x3Width, x3Height,
                                           x3Stride, menuValues, 1) == Status::Ok);
   assert(menuValue != menuFocus);
+  std::vector<std::uint8_t> confirmNo(menu.size(), 0xFF);
+  std::vector<std::uint8_t> confirmYes(menu.size(), 0xFF);
+  assert(tamaink::render::overlaySettings(confirmNo.data(), confirmNo.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 3, true, false) == Status::Ok);
+  assert(tamaink::render::overlaySettings(confirmYes.data(), confirmYes.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 3, true, true) == Status::Ok);
+  assert(confirmNo != confirmYes);  // selection visibly moves between NO and YES
+  assert(tamaink::render::overlaySettings(confirmNo.data(), confirmNo.size(), x3Width, x3Height,
+                                          x3Stride, menuValues, 5) == Status::InvalidArgument);
   return 0;
 }

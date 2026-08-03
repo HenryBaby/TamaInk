@@ -51,31 +51,31 @@ bool decode(const std::uint8_t* data, std::size_t length, Values& output) {
   return true;
 }
 
-Controller::Event Controller::update(std::uint32_t now, bool up, bool back,
-                                     bool confirm, bool power) {
+Controller::Event Controller::update(bool up, bool back, bool confirm, bool power) {
   if (!open_) {
-    if (upNeedsRelease_) {
-      if (!up) upNeedsRelease_ = false;
-      return Event::None;
-    }
     if (up) {
-      if (!upTracking_) { upTracking_ = true; upSince_ = now; }
-      if (static_cast<std::uint32_t>(now - upSince_) >= 1500u) {
-        open_ = true;
-        focus_ = 0;
-        upTracking_ = false;
-        upNeedsRelease_ = true;
-        return Event::Opened;
-      }
-    } else {
-      upTracking_ = false;
+      open_ = true;
+      confirmation_ = false;
+      resetYes_ = false;
+      focus_ = 0;
+      return Event::Opened;
+    }
+    return Event::None;
+  }
+  if (confirmation_) {
+    if (power) { confirmation_ = false; open_ = false; return Event::Closed; }
+    if (back) { resetYes_ = !resetYes_; return Event::Changed; }
+    if (confirm) {
+      if (!resetYes_) { confirmation_ = false; return Event::Changed; }
+      confirmation_ = false; open_ = false; return Event::ResetRequested;
     }
     return Event::None;
   }
   if (power) { open_ = false; return Event::Closed; }
-  if (back) { focus_ = static_cast<std::uint8_t>((focus_ + 1) % 4); return Event::Changed; }
+  if (back) { focus_ = static_cast<std::uint8_t>((focus_ + 1) % 5); return Event::Changed; }
   if (confirm) {
-    if (focus_ == 3) { open_ = false; return Event::Closed; }
+    if (focus_ == 4) { open_ = false; return Event::Closed; }
+    if (focus_ == 3) { confirmation_ = true; resetYes_ = false; return Event::DialogOpened; }
     if (focus_ == 0) values_.battery = values_.battery == Battery::Show ? Battery::Hide : Battery::Show;
     else if (focus_ == 1) values_.display = static_cast<Display>((static_cast<int>(values_.display) + 1) % 3);
     else values_.autosave = static_cast<Autosave>((static_cast<int>(values_.autosave) + 1) % 3);

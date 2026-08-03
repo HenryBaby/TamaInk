@@ -44,8 +44,8 @@ The ROM is treated as read-only. TamaInk stores its own recoverable state under
 | Confirm | B |
 | Power | C |
 
-Hold **Back + Power** together for at least two seconds, then release both, to
-save and enter deep sleep. Press **Power** once to wake the device.
+Hold **Power** for at least two seconds, then release it, to save and enter deep
+sleep. Press **Power** once to wake the device.
 
 The eight bottom icons follow the original P1 order: Food, Light, Game,
 Medicine, Toilet, Health, Discipline, and Attention.

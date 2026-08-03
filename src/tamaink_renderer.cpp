@@ -158,8 +158,8 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
 Status overlaySettings(std::uint8_t* destination, std::size_t capacity,
                        std::uint16_t width, std::uint16_t height,
                        std::size_t stride, const settings::Values& values,
-                       std::uint8_t focus) {
-  if (!destination || !width || !height || focus > 3 ||
+                       std::uint8_t focus, bool confirmation, bool resetYes) {
+  if (!destination || !width || !height || focus > 4 ||
       stride < (static_cast<std::size_t>(width) + 7u) / 8u ||
       height > std::numeric_limits<std::size_t>::max() / stride ||
       stride * static_cast<std::size_t>(height) > capacity || !settings::validate(values))
@@ -170,7 +170,7 @@ Status overlaySettings(std::uint8_t* destination, std::size_t capacity,
   const int logicalWidth = height;
   const int logicalHeight = width;
   const int boxWidth = 432;
-  const int boxHeight = 360;
+  const int boxHeight = 340;
   const int boxX = (logicalWidth - boxWidth) / 2;
   const int boxY = (logicalHeight - boxHeight) / 2;
   auto pixel = [&](int logicalX, int logicalY, bool black) {
@@ -227,15 +227,31 @@ Status overlaySettings(std::uint8_t* destination, std::size_t capacity,
               for (int px = 0; px < scale; ++px) pixel(x + gx * scale + px, y + gy * scale + py, black);
     }
   };
-  drawText("SETTINGS", boxX + 32, boxY + 24, true);
-  const char* labels[] = {"BATTERY", "DISPLAY", "AUTOSAVE", "EXIT"};
+  if (confirmation) {
+    drawText("RESET", boxX + 156, boxY + 32, true);
+    drawText("DELETE DATA?", boxX + 72, boxY + 100, true);
+    drawText("CANNOT UNDO", boxX + 72, boxY + 140, true);
+    const int optionY = boxY + 212;
+    const int noX = boxX + 92;
+    const int yesX = boxX + 244;
+    const int selectedX = resetYes ? yesX - 16 : noX - 16;
+    const int selectedWidth = resetYes ? 104 : 80;
+    for (int y = optionY - 10; y < optionY + 30; ++y)
+      for (int x = selectedX; x < selectedX + selectedWidth; ++x) pixel(x, y, true);
+    drawText("NO", noX, optionY, resetYes);
+    drawText("YES", yesX, optionY, !resetYes);
+    return Status::Ok;
+  }
+  // SETTINGS header is centered using measured 24-pixel glyph pitch.
+  drawText("SETTINGS", boxX + (boxWidth - 8 * 24 + 4) / 2, boxY + 24, true);
+  const char* labels[] = {"BATTERY", "DISPLAY", "AUTOSAVE", "RESET", "EXIT"};
   const char* battery[] = {"SHOW", "HIDE"};
   const char* display[] = {"SMOOTH", "BALANCED", "ECO"};
   const char* autosave[] = {"5 MIN", "15 MIN", "30 MIN"};
   const char* valuesText = nullptr;
-  const int rowHeight = 68;
-  for (int row = 0; row < 4; ++row) {
-    const int rowY = boxY + 96 + row * rowHeight;
+  const int rowHeight = 48;
+  for (int row = 0; row < 5; ++row) {
+    const int rowY = boxY + 76 + row * rowHeight;
     const bool selected = row == focus;
     if (selected)
       for (int y = rowY - 8; y < rowY + 48; ++y)

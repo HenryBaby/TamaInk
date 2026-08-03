@@ -33,6 +33,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
 Status overlaySettings(std::uint8_t* destination, std::size_t capacity,
                        std::uint16_t width, std::uint16_t height,
                        std::size_t stride, const settings::Values& values,
-                       std::uint8_t focus);
+                       std::uint8_t focus, bool confirmation = false,
+                       bool resetYes = false);
 
 } // namespace tamaink::render

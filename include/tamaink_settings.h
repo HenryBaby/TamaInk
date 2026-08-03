@@ -24,11 +24,12 @@ bool decode(const std::uint8_t* data, std::size_t length, Values& output);
 
 class Controller {
  public:
-  enum class Event : std::uint8_t { None, Opened, Changed, Closed };
-  Event update(std::uint32_t now, bool up, bool backEdge, bool confirmEdge,
-               bool powerEdge);
+  enum class Event : std::uint8_t { None, Opened, Changed, Closed, DialogOpened, ResetRequested };
+  Event update(bool upEdge, bool backEdge, bool confirmEdge, bool powerEdge);
   bool open() const { return open_; }
   std::uint8_t focus() const { return focus_; }
+  bool confirmation() const { return confirmation_; }
+  bool resetYes() const { return resetYes_; }
   const Values& values() const { return values_; }
   Values& values() { return values_; }
   void setValues(const Values& values) {
@@ -37,9 +38,8 @@ class Controller {
 
  private:
   bool open_ = false;
-  bool upTracking_ = false;
-  bool upNeedsRelease_ = false;
-  std::uint32_t upSince_ = 0;
+  bool confirmation_ = false;
+  bool resetYes_ = false;
   std::uint8_t focus_ = 0;
   Values values_{};
 };

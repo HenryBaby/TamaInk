@@ -83,6 +83,8 @@ struct RenderPacket {
   tamaink::tamalib::Snapshot frame{};
   tamaink::settings::Values settings{};
   bool menu = false;
+  bool confirmation = false;
+  bool resetYes = false;
   std::uint8_t focus = 0;
   bool batteryKnown = false;
   std::uint8_t battery = 0;
@@ -91,7 +93,7 @@ struct RenderPacket {
 bool rendererForceFull = false;
 RenderPacket makeRenderPacket() {
   return {emulatorSnapshot, settingsController.values(), settingsController.open(),
-          settingsController.focus(), batteryPercentageKnown, batteryPercentage,
+          settingsController.confirmation(), settingsController.resetYes(), settingsController.focus(), batteryPercentageKnown, batteryPercentage,
           rendererForceFull};
 }
 BaseType_t enqueueRenderer() {
@@ -113,6 +115,10 @@ bool rendererBegun = false;
 volatile bool rendererStopRequested = false;
 tamaink::wake::Coordinator wakeDiagnostic;
 tamaink::sleep_gesture::Controller sleepGesture;
+bool powerTapReleasePending = false;
+std::uint32_t powerTapPressedAt = 0;
+bool suppressPowerUntilRelease = false;
+bool resetPending = false;
 bool wakeCatchupPending = false;
 std::uint64_t wakeCatchupElapsedSeconds = 0;
 std::uint32_t wakeCatchupVirtualTimestamp = 0;
@@ -171,7 +177,7 @@ void rendererTask(void*) {
       if (first) { rendererFirstFrameConfirmed = false; if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone); }
       continue;
     }
-    if (packet.menu) tamaink::render::overlaySettings(rendererDisplay->getFrameBuffer(), rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(), rendererDisplay->getDisplayWidthBytes(), packet.settings, packet.focus);
+    if (packet.menu) tamaink::render::overlaySettings(rendererDisplay->getFrameBuffer(), rendererDisplay->getBufferSize(), rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight(), rendererDisplay->getDisplayWidthBytes(), packet.settings, packet.focus, packet.confirmation, packet.resetYes);
     const auto kind = packet.forceFull ? tamaink::render::RefreshKind::Full : cadence.next();
     const bool periodicPromotion = !first && kind == tamaink::render::RefreshKind::Full && !packet.forceFull;
     rendererDisplay->displayBuffer(kind == tamaink::render::RefreshKind::Full ? EInkDisplay::FULL_REFRESH
@@ -275,17 +281,27 @@ void printEmulatorSnapshot(const tamaink::tamalib::Snapshot& s) {
   Serial.printf("EMU ICONS: 0x%02X\n", s.icons);
 }
 void updateEmulatorInput() {
+  const std::uint32_t inputNow = static_cast<std::uint32_t>(millis());
+  if (powerTapReleasePending &&
+      tamaink::sleep_gesture::tapPulseElapsed(powerTapPressedAt, inputNow)) {
+    const auto status = emulator.set_button(tamaink::tamalib::Button::C, false);
+    Serial.printf("EMU INPUT: C released%s\n",
+                  status == tamaink::tamalib::Status::Ok ? "" : " (adapter error)");
+    powerTapReleasePending = false;
+  }
   inputManager.update();
   const bool menuWasOpen = settingsController.open();
+  const bool dialogWasOpen = settingsController.confirmation();
   const auto before = settingsController.values();
   const auto menuEvent = settingsController.update(
-      static_cast<std::uint32_t>(millis()),
-      inputManager.isPressed(InputManager::BTN_UP),
+      inputManager.wasPressed(InputManager::BTN_UP),
       inputManager.wasPressed(InputManager::BTN_BACK),
       inputManager.wasPressed(InputManager::BTN_CONFIRM),
       inputManager.wasPressed(InputManager::BTN_POWER));
   if (menuEvent != tamaink::settings::Controller::Event::None) {
-    rendererForceFull = menuWasOpen != settingsController.open();
+    rendererForceFull = (menuWasOpen != settingsController.open()) ||
+                        (dialogWasOpen != settingsController.confirmation()) ||
+                        menuEvent == tamaink::settings::Controller::Event::ResetRequested;
     rendererDispatch.setInterval(lcdInterval());
     const auto& after = settingsController.values();
     if (before.autosave != after.autosave)
@@ -298,17 +314,25 @@ void updateEmulatorInput() {
       if (tamaink::settings::encode(after, encoded, sizeof encoded) == sizeof encoded)
         settingsPrefs.putBytes("values", encoded, sizeof encoded);
     }
+    if (menuEvent == tamaink::settings::Controller::Event::ResetRequested) {
+      resetPending = true;
+      Serial.println("Reset requested: waiting for persistence idle");
+    }
     if (rendererEnabled && rendererQueue) {
       enqueueRenderer();
       rendererDispatch.queued(millis());
     }
   }
   if (menuWasOpen || menuEvent != tamaink::settings::Controller::Event::None ||
-      settingsController.open())
+      settingsController.open()) {
+    if (inputManager.isPressed(InputManager::BTN_POWER)) suppressPowerUntilRelease = true;
+    sleepGesture.reset();
     return;
+  }
   const uint8_t physical[3] = {InputManager::BTN_BACK, InputManager::BTN_CONFIRM, InputManager::BTN_POWER};
   const char labels[3] = {'A', 'B', 'C'};
   for (unsigned i = 0; i < 3; ++i) {
+    if (i == 2) continue; // POWER is buffered by sleep gesture below.
     if (inputManager.wasPressed(physical[i])) {
       const auto status = emulator.set_button(static_cast<tamaink::tamalib::Button>(i), true);
       Serial.printf("EMU INPUT: %c pressed%s\n", labels[i],
@@ -320,13 +344,21 @@ void updateEmulatorInput() {
                     status == tamaink::tamalib::Status::Ok ? "" : " (adapter error)");
     }
   }
+  if (suppressPowerUntilRelease) {
+    sleepGesture.reset();
+    if (!inputManager.isPressed(InputManager::BTN_POWER)) suppressPowerUntilRelease = false;
+    return;
+  }
   const auto gestureEvent = sleepGesture.update(
-      static_cast<uint32_t>(millis()), inputManager.isPressed(InputManager::BTN_BACK),
-      inputManager.isPressed(InputManager::BTN_POWER));
-  if (gestureEvent == tamaink::sleep_gesture::Controller::Event::Cancelled) {
-    Serial.println("Wake diagnostic gesture canceled: BACK+POWER chord released before 2000 ms");
+      inputNow, inputManager.isPressed(InputManager::BTN_POWER));
+  if (gestureEvent == tamaink::sleep_gesture::Controller::Event::Tap) {
+    const auto status = emulator.set_button(tamaink::tamalib::Button::C, true);
+    Serial.printf("EMU INPUT: C pressed%s\n",
+                  status == tamaink::tamalib::Status::Ok ? "" : " (adapter error)");
+    powerTapReleasePending = true;
+    powerTapPressedAt = inputNow;
   } else if (gestureEvent == tamaink::sleep_gesture::Controller::Event::Trigger) {
-    Serial.println("Wake diagnostic gesture released: requesting durable save");
+    Serial.println("Power hold released: requesting durable save");
     dispatchSerialCommand('w');
   }
 }
@@ -419,7 +451,7 @@ bool startEmulator() {
   autosaveController.arm(millis(), autosaveInterval());
   emulatorActive = true;
   batteryTelemetrySchedule.arm(millis());
-  Serial.println("Emulator: active; physical BACK=A, CONFIRM=B, POWER=C; hold BACK+POWER >=2000 ms, then release for wake diagnostic; display refresh bypassed");
+  Serial.println("Emulator: active; BACK=A, CONFIRM=B, POWER tap=C; hold POWER >=2000 ms then release for wake diagnostic; display refresh bypassed");
   printEmulatorSnapshot(emulatorSnapshot); emulatorPrinted = emulatorSnapshot; emulatorPrintedValid = true;
   emulatorObserved = emulatorSnapshot; emulatorObservedValid = true;
   serialFramePending = false; rendererDispatch.reset(); emulatorLastPrintAt = millis();
@@ -966,6 +998,45 @@ void scanPersistence() {
   if (newest < 0) { persistenceSlot = 0; persistenceGeneration = 0; }
   if (newest >= 0) { persistenceSlot = static_cast<uint8_t>(newest); persistenceGeneration = persistenceBootRecord[newest].generation; Serial.printf("Persistence selected slot %c generation=%lu\n", 'A' + newest, static_cast<unsigned long>(persistenceGeneration)); }
 }
+bool cleanupOwnedPersistence() {
+  if (!SdMan.ready()) {
+    Serial.println("Persistence cleanup failed: SD unavailable");
+    return false;
+  }
+  const bool cleanupSafe = persistenceState == PersistenceState::Idle ||
+                           persistenceState == PersistenceState::AwaitReset;
+  if (!cleanupSafe || saveArbiter.owner() != tamaink::low_battery::Owner::None) {
+    Serial.println("Persistence cleanup refused: transaction busy");
+    return false;
+  }
+  persistenceState = PersistenceState::Idle;
+  if (persistenceFile) persistenceFile.close();
+  const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]);
+  const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]);
+  const bool gone = !SdMan.exists(kPersistPaths[0]) && !SdMan.exists(kPersistPaths[1]);
+  if (!a || !b || !gone) {
+    Serial.println("Persistence cleanup failed: owned files could not be removed");
+    return false;
+  }
+  if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir);
+  persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0;
+  autosaveController.cleanup(millis(), autosaveInterval());
+  return true;
+}
+void processPendingReset() {
+  if (!resetPending) return;
+  const bool cleanupSafe = persistenceState == PersistenceState::Idle ||
+                           persistenceState == PersistenceState::AwaitReset;
+  if (!cleanupSafe || saveArbiter.owner() != tamaink::low_battery::Owner::None) return;
+  resetPending = false;
+  if (cleanupOwnedPersistence()) {
+    Serial.println("Reset: owned saves removed; rebooting fresh");
+    Serial.flush();
+    ESP.restart();
+  } else {
+    Serial.println("Reset canceled: save cleanup did not complete");
+  }
+}
 
 void failPersistenceWrite(const char* why) { if (persistenceFile) persistenceFile.close(); persistenceState = PersistenceState::Idle; wakeDiagnostic.saveFailed(); if (saveArbiter.owner() == tamaink::low_battery::Owner::LowBattery) lowBatterySleep.saveFailed(); saveArbiter.fail(saveArbiter.owner()); autosaveController.writeFailure(millis(), AUTOSAVE_RETRY_MS); if (wakeDiagnostic.requested) Serial.println("Wake diagnostic canceled: save failed"); wakeDiagnostic.requested = false; Serial.printf("Persistence transaction failed: %s; rescanning\n", why); scanPersistence(); }
 
@@ -1157,7 +1228,8 @@ void persistenceCommand(char c, bool internal = false) {
     if (f.write(&b, 1) != 1 || !f.sync()) { f.close(); Serial.println("Persistence c failed"); return; }
     f.close(); persistenceState = PersistenceState::AwaitReset; Serial.println("Persistence newest corrupted; await physical reset"); return;
   }
-  if (c == 'x') { const bool a = !SdMan.exists(kPersistPaths[0]) || SdMan.remove(kPersistPaths[0]); const bool b = !SdMan.exists(kPersistPaths[1]) || SdMan.remove(kPersistPaths[1]); if (!a || !b) { Serial.println("Persistence cleanup failed"); scanPersistence(); return; } if (SdMan.exists(kPersistDir)) SdMan.rmdir(kPersistDir); persistenceHasSelected = false; persistenceGeneration = 0; persistenceSlot = 0; autosaveController.cleanup(millis(), autosaveInterval()); Serial.println("Persistence owned files cleaned"); }
+  if (c == 'x' && cleanupOwnedPersistence())
+    Serial.println("Persistence owned files cleaned");
 }
 
 void dispatchSerialCommand(char c) {
@@ -1298,6 +1370,7 @@ void setup() {
 void loop() {
   if (emulatorActive) {
     updateEmulatorInput();
+    processPendingReset();
     while (Serial.available()) dispatchSerialCommand(static_cast<char>(Serial.read()));
     const uint32_t nowTelemetry = millis();
     if (batteryTelemetrySchedule.due(nowTelemetry)) {
