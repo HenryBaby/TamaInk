@@ -188,6 +188,11 @@ int main() {
   tamaink::settings::Values menuValues{};
   assert(tamaink::render::overlaySettings(menu.data(), menu.size(), x3Width, x3Height,
                                           x3Stride, menuValues, 0) == Status::Ok);
+  const auto menuLogicalBlack = [&](unsigned x, unsigned y) {
+    return black(menu, x3Stride, y, x3Height - 1u - x);
+  };
+  assert(menuLogicalBlack(60, 294) && menuLogicalBlack(60, 329));
+  assert(!menuLogicalBlack(60, 330)); // highlight ends before the next 48px row
   unsigned minX = x3Width, maxX = 0, minY = x3Height, maxY = 0, ink = 0;
   for (unsigned y = 0; y < x3Height; ++y)
     for (unsigned x = 0; x < x3Width; ++x)

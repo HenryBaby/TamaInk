@@ -254,7 +254,7 @@ Status overlaySettings(std::uint8_t* destination, std::size_t capacity,
     const int rowY = boxY + 76 + row * rowHeight;
     const bool selected = row == focus;
     if (selected)
-      for (int y = rowY - 8; y < rowY + 48; ++y)
+      for (int y = rowY - 8; y < rowY + 28; ++y)
         for (int x = boxX + 12; x < boxX + boxWidth - 12; ++x) pixel(x, y, true);
     drawText(labels[row], boxX + 32, rowY, !selected);
     if (row == 0) valuesText = battery[values.battery == settings::Battery::Hide];
