@@ -7,7 +7,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
                std::size_t capacity, std::uint16_t width, std::uint16_t height,
                std::size_t stride, std::int32_t originX, std::int32_t originY,
                std::uint16_t scale, Rotation rotation, IconLayout iconLayout,
-               BatteryStatus battery) {
+               BatteryStatus battery, std::uint16_t iconScale) {
   if (!destination || !width || !height || !scale || stride < (static_cast<std::size_t>(width) + 7u) / 8u)
     return Status::InvalidArgument;
   if (rotation != Rotation::None && rotation != Rotation::CounterClockwise90)
@@ -19,6 +19,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
   if (height > std::numeric_limits<std::size_t>::max() / stride) return Status::Overflow;
   const std::size_t bytes = stride * height;
   if (bytes > capacity) return Status::InvalidArgument;
+  if (iconScale == 0) iconScale = scale;
   std::memset(destination, 0xFF, bytes);
   const std::int64_t footprintWidth = (rotation == Rotation::CounterClockwise90 ? 16ll : 32ll) * scale;
   const std::int64_t footprintHeight = (rotation == Rotation::CounterClockwise90 ? 32ll : 16ll) * scale;
@@ -46,7 +47,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
     }
   }
   if (iconLayout == IconLayout::P1BottomRow) {
-    const std::int64_t markerSide = scale * 3ll;
+    const std::int64_t markerSide = iconScale * 3ll;
     // Preserve X3's 64px pitch while fitting all eight 48px markers on X4.
     const std::int64_t markerY = 16;
     const std::int64_t markerStep = (static_cast<std::int64_t>(height) - 32ll - markerSide) / 7ll;

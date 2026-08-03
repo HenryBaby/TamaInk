@@ -27,7 +27,7 @@ Status snapshot(const tamalib::Snapshot& source, std::uint8_t* destination,
                std::size_t stride, std::int32_t originX, std::int32_t originY,
                std::uint16_t scale, Rotation rotation = Rotation::None,
                IconLayout iconLayout = IconLayout::None,
-               BatteryStatus battery = {});
+               BatteryStatus battery = {}, std::uint16_t iconScale = 0);
 
 // Composites a centered settings popup into an already-rendered framebuffer.
 Status overlaySettings(std::uint8_t* destination, std::size_t capacity,

@@ -91,6 +91,8 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer_refresh.cpp test/host/renderer_refresh_test.cpp -o /tmp/tamaink-renderer-refresh-tests && /tmp/tamaink-renderer-refresh-tests
       - name: Run renderer dispatch host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer_dispatch.cpp test/host/renderer_dispatch_test.cpp -o /tmp/tamaink-renderer-dispatch-tests && /tmp/tamaink-renderer-dispatch-tests
+      - name: Run renderer geometry layout host tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/renderer_layout_test.cpp -o /tmp/tamaink-renderer-layout-tests && /tmp/tamaink-renderer-layout-tests
       - name: Run sleep screen host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include -I freeink-sdk/libs/ui/FreeInkUI/include src/tamaink_sleep_screen.cpp test/host/sleep_screen_test.cpp -o /tmp/tamaink-sleep-tests && /tmp/tamaink-sleep-tests
 

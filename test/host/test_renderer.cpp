@@ -1,4 +1,5 @@
 #include "tamaink_renderer.h"
+#include "tamaink_renderer_layout.h"
 #include "tamaink_settings.h"
 #include <cassert>
 #include <cstdint>
@@ -185,12 +186,23 @@ int main() {
   // X4 geometry: centered LCD, all bottom-row markers, battery and sentinels.
   constexpr unsigned x4Width = 800, x4Height = 480, x4Stride = 100;
   std::vector<std::uint8_t> x4(x4Stride * x4Height + 7, 0xA5);
-  tamaink::tamalib::Snapshot x4Frame{}; x4Frame.lcd[0] = 1u << 31; x4Frame.icons = 0xFF;
-  const unsigned x4Origin = (x4Width - 256) / 2;
+  tamaink::tamalib::Snapshot x4Frame{};
+  x4Frame.lcd[0] = (1u << 31) | (1u << 0);
+  x4Frame.lcd[15] = (1u << 31) | (1u << 0);
+  x4Frame.icons = 0xFF;
+  const auto x4Layout = tamaink::render::layoutForGeometry(x4Width, x4Height);
+  const unsigned x4Origin = static_cast<unsigned>(x4Layout.lcdOriginX);
   assert(tamaink::render::snapshot(x4Frame, x4.data(), x4Stride * x4Height, x4Width, x4Height, x4Stride,
-                                   x4Origin, 8, 16, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
-                                   tamaink::render::BatteryStatus{true, 97}) == Status::Ok);
-  assert(black(x4, x4Stride, x4Origin, 8));
+                                   x4Origin, x4Layout.lcdOriginY, x4Layout.lcdScale, Rotation::CounterClockwise90, IconLayout::P1BottomRow,
+                                   tamaink::render::BatteryStatus{true, 97}, x4Layout.iconScale) == Status::Ok);
+  assert(black(x4, x4Stride, x4Origin, static_cast<unsigned>(x4Layout.lcdOriginY)));
+  // Extreme source rows/columns prove the complete rotated footprint is visible.
+  assert(black(x4, x4Stride, x4Origin + 15 * x4Layout.lcdScale,
+               static_cast<unsigned>(x4Layout.lcdOriginY + 31 * x4Layout.lcdScale)));
+  assert(black(x4, x4Stride, x4Origin,
+               static_cast<unsigned>(x4Layout.lcdOriginY + 31 * x4Layout.lcdScale)));
+  assert(black(x4, x4Stride, x4Origin + 15 * x4Layout.lcdScale,
+               static_cast<unsigned>(x4Layout.lcdOriginY)));
   for (unsigned bit = 0; bit < 8; ++bit) {
     const unsigned x0 = x4Width - 48, y0 = 16 + (7 - bit) * ((x4Height - 32 - 48) / 7);
     bool visible = false;
