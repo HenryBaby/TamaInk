@@ -125,7 +125,7 @@ std::uint64_t wakeCatchupElapsedSeconds = 0;
 std::uint32_t wakeCatchupVirtualTimestamp = 0;
 std::uint32_t wakeCatchupTimestampFrequency = 0;
 void dispatchSerialCommand(char c);
-bool initializeX3SharedSpi();
+bool initializeSharedSpi();
 bool readRtcEpoch(std::uint64_t& epoch);
 void scanPersistence();
 bool readPersistenceSlot(uint8_t slot, tamaink::persist::Record& out);
@@ -220,16 +220,20 @@ void stopRenderer() {
 }
 
 bool startRenderer() {
-  if (BoardConfig::ACTIVE.displayController != BoardConfig::DisplayController::UC8253) {
-    Serial.println("Display rendering disabled: controller is not UC8253; serial emulator remains active");
+  const auto controller = BoardConfig::ACTIVE.displayController;
+  if (controller != BoardConfig::DisplayController::UC8253 &&
+      controller != BoardConfig::DisplayController::SSD1677) {
+    Serial.println("Display rendering disabled: controller is not UC8253/SSD1677; serial emulator remains active");
     return false;
   }
   const auto& p = BoardConfig::ACTIVE.display;
   rendererDisplay = new (std::nothrow) EInkDisplay(p.sclk, p.mosi, p.cs, p.dc, p.rst, p.busy);
   if (!rendererDisplay) { Serial.println("Display renderer: EInkDisplay allocation failed"); return false; }
-  rendererDisplay->setDisplayX3();
+  if (BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3 ||
+      BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3Uc8279)
+    rendererDisplay->setDisplayX3();
   rendererStopRequested = false;
-  if (!initializeX3SharedSpi()) { delete rendererDisplay; rendererDisplay = nullptr; return false; }
+  if (!initializeSharedSpi()) { delete rendererDisplay; rendererDisplay = nullptr; return false; }
   rendererDisplay->begin();
   rendererBegun = true;
   if (!rendererDisplay->framebufferReady()) { Serial.println("Display renderer: framebuffer allocation failed"); stopRenderer(); return false; }
@@ -244,7 +248,8 @@ bool startRenderer() {
     Serial.println("Display renderer: task allocation failed"); stopRenderer(); return false;
   }
   rendererEnabled = true;
-  Serial.println("Display renderer: UC8253 X3 active (16x scale, centered CCW portrait; P1 order confirmed; bottom-row layout validation pending)");
+  Serial.printf("Display renderer: %s active (16x scale, centered CCW portrait; P1 order confirmed; bottom-row layout validation pending)\n",
+                controller == BoardConfig::DisplayController::SSD1677 ? "SSD1677 X4" : "UC8253 X3");
   return true;
 }
 
@@ -700,11 +705,11 @@ void printAdcSnapshot() {
                 classifiedButtonName(group2.button));
 }
 
-bool initializeX3SharedSpi() {
+bool initializeSharedSpi() {
   const auto& displayPins = BoardConfig::ACTIVE.display;
   const auto& sdPins = BoardConfig::ACTIVE.sd;
   if (displayPins.sclk < 0 || displayPins.mosi < 0 || displayPins.cs < 0 || sdPins.miso < 0 || sdPins.cs < 0) {
-    Serial.printf("X3 SPI init skipped: invalid pins (display sclk=%d mosi=%d cs=%d; SD miso=%d cs=%d)\n",
+    Serial.printf("Shared SPI init skipped: invalid pins (display sclk=%d mosi=%d cs=%d; SD miso=%d cs=%d)\n",
                   displayPins.sclk, displayPins.mosi, displayPins.cs, sdPins.miso, sdPins.cs);
     return false;
   }
@@ -715,10 +720,10 @@ bool initializeX3SharedSpi() {
   digitalWrite(sdPins.cs, HIGH);
   if (!SPI.begin(displayPins.sclk, sdPins.miso, displayPins.mosi, displayPins.cs)) {
     SPI.end();
-    Serial.println("X3 shared SPI init failed");
+    Serial.println("Shared SPI init failed");
     return false;
   }
-  Serial.printf("X3 shared SPI ready: sclk=%d miso=%d mosi=%d displayCS=%d sdCS=%d\n", displayPins.sclk,
+  Serial.printf("Shared SPI ready: sclk=%d miso=%d mosi=%d displayCS=%d sdCS=%d\n", displayPins.sclk,
                 sdPins.miso, displayPins.mosi, displayPins.cs, sdPins.cs);
   return true;
 }
@@ -1351,7 +1356,7 @@ void setup() {
     const auto& pins = BoardConfig::ACTIVE.display;
     static EInkDisplay display(pins.sclk, pins.mosi, pins.cs, pins.dc, pins.rst, pins.busy);
     display.setDisplayX3();
-    if (!initializeX3SharedSpi()) return;
+    if (!initializeSharedSpi()) return;
     display.begin();
     if (!display.framebufferReady()) {
       Serial.println("Display test aborted: framebuffer allocation failed.");
