@@ -82,7 +82,7 @@ jobs:
         run: bash test/host/run_emulator_state_tests.sh
 
       - name: Run LCD renderer host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer.cpp test/host/test_renderer.cpp -o /tmp/tamaink-renderer-tests && /tmp/tamaink-renderer-tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer.cpp src/tamaink_settings.cpp test/host/test_renderer.cpp -o /tmp/tamaink-renderer-tests && /tmp/tamaink-renderer-tests
       - name: Run renderer periodic cleaning host tests
         run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer_refresh.cpp test/host/renderer_refresh_test.cpp -o /tmp/tamaink-renderer-refresh-tests && /tmp/tamaink-renderer-refresh-tests
       - name: Run renderer dispatch host tests
