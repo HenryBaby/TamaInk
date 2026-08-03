@@ -220,8 +220,8 @@ firmware builds.
 
 Release-candidate preparation must complete clean-install, missing and corrupt
 file, documentation, provenance, licensing, and packaged-artifact checks.
-Until then, builds remain pre-release: X3 UC8253 is hardware-validated; X4 is
-compiled and policy-gated but not claimed as hardware validated.
+Until then, builds remain pre-release. X3 UC8253 and X4 SSD1677 are
+hardware-validated; alternate controller variants remain policy-gated.
 
 ## Non-goals
 
