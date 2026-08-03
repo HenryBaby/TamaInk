@@ -15,6 +15,7 @@
 #include "tamaink_rom.h"
 #include "tamaink_tamalib.h"
 #include "tamaink_renderer.h"
+#include "tamaink_renderer_layout.h"
 #include "tamaink_renderer_refresh.h"
 #include "tamaink_renderer_dispatch.h"
 #include "tamaink_emulator_state.h"
@@ -177,13 +178,13 @@ void rendererTask(void*) {
     cadence.setThreshold(threshold);
     const auto displayWidth = rendererDisplay->getDisplayWidth();
     const auto displayHeight = rendererDisplay->getDisplayHeight();
-    const std::int32_t lcdOriginX = (static_cast<std::int32_t>(displayWidth) - 16 * 16) / 2;
+    const auto layout = tamaink::render::layoutForGeometry(displayWidth, displayHeight);
     const auto status = tamaink::render::snapshot(packet.frame, rendererDisplay->getFrameBuffer(),
         rendererDisplay->getBufferSize(), displayWidth, displayHeight,
-        rendererDisplay->getDisplayWidthBytes(), lcdOriginX, 8, 16, tamaink::render::Rotation::CounterClockwise90,
+        rendererDisplay->getDisplayWidthBytes(), layout.lcdOriginX, layout.lcdOriginY, layout.lcdScale, tamaink::render::Rotation::CounterClockwise90,
         tamaink::render::IconLayout::P1BottomRow,
         tamaink::render::BatteryStatus{packet.batteryKnown, packet.battery,
-          packet.settings.battery == tamaink::settings::Battery::Show});
+          packet.settings.battery == tamaink::settings::Battery::Show}, layout.iconScale);
     if (status != tamaink::render::Status::Ok) {
       Serial.println("Display renderer: frame geometry rejected");
       if (first) { rendererFirstFrameConfirmed = false; if (rendererFirstFrameDone) xSemaphoreGive(rendererFirstFrameDone); }
@@ -259,8 +260,10 @@ bool startRenderer() {
     Serial.println("Display renderer: task allocation failed"); stopRenderer(); return false;
   }
   rendererEnabled = true;
-  Serial.printf("Display renderer: %s active (16x scale, centered CCW portrait; P1 order confirmed; bottom-row layout validation pending)\n",
-                controller == BoardConfig::DisplayController::SSD1677 ? "SSD1677 X4" : "UC8253 X3");
+  const auto layout = tamaink::render::layoutForGeometry(rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight());
+  Serial.printf("Display renderer: %s active (LCD %ux scale, origin %ld,%ld; icons %ux)\n",
+                controller == BoardConfig::DisplayController::SSD1677 ? "SSD1677 X4" : "UC8253 X3",
+                layout.lcdScale, static_cast<long>(layout.lcdOriginX), static_cast<long>(layout.lcdOriginY), layout.iconScale);
   return true;
 }
 
