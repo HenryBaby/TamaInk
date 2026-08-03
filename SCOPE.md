@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TamaInk is dedicated firmware that turns an Xteink X3 into a Tamagotchi P1
+TamaInk is dedicated firmware that turns an unlocked regular Xteink X3 or X4 into a Tamagotchi P1
 device. It boots directly into the emulator and does not provide e-reader
 functionality.
 
@@ -19,28 +19,26 @@ ROM data.
 3. **Single-purpose operation.** The finished device behaves as a Tamagotchi,
    not as an e-reader with a Tamagotchi application.
 4. **Minimal dependencies.** Use only the FreeInk components needed to operate
-   X3 hardware. CrossPoint is a reference, not the application base.
+   regular X3/X4 hardware. CrossPoint is a reference, not the application base.
 5. **User data must survive failure.** Save-state handling must tolerate resets,
    interrupted writes, and corrupt files without silently losing the last valid
    state.
 
 ## Supported platform
 
-The initial release target is an unlocked ESP32-C3-based Xteink X3 with:
+Supported profiles are unlocked regular ESP32-C3-based Xteink X3 and X4 units:
 
-- 792x528 monochrome e-ink display;
+- X3: 792x528 monochrome display, DS3231 RTC, BQ27220 gauge, UC8253;
+- X4: 800x480 monochrome display, SSD1677, ADC battery telemetry, no RTC;
 - physical ADC-ladder buttons;
 - microSD storage;
-- DS3231 real-time clock;
-- BQ27220 battery gauge; and
-- the physically validated UC8253 display controller.
+- Both profiles use physical controls and microSD storage.
 
-UC8279d units are detected, but their display path remains disabled until it
-has been physically validated. Broad X3 support must not be claimed on the
-basis of controller detection alone.
+UC8279d (X3) and UC8179 (X4) are detected but disabled pending validation.
+X4 Pro and unrelated devices are unsupported.
 
-Initial releases support only X3 units that can be detected and reflashed
-directly over USB. USB-locked devices are unsupported until installation,
+Initial releases support only regular X3/X4 units that can be detected and
+reflashed directly over USB. USB-locked devices are unsupported until installation,
 updates, and recovery have been independently proven safe on that hardware.
 
 ## Architecture
@@ -50,7 +48,7 @@ underneath it.
 
 - **TamaLib** provides E0C6S46 emulation, P1 execution, LCD state, icons, button
   input, timing, and emulated sound state.
-- **FreeInk SDK** provides the reusable X3 hardware layer.
+- **FreeInk SDK** provides the reusable X3/X4 hardware layer.
 - **TamaInk code** owns the application lifecycle, ROM validation, rendering,
   persistence, power policy, and user experience.
 
@@ -130,7 +128,7 @@ inactive-slot writes must leave the previously active application bootable.
 ### Emulation
 
 - Run the P1 ROM through TamaLib with deterministic timing.
-- Map three physical X3 buttons to Tamagotchi A, B, and C press/release events.
+- Map three physical board buttons to Tamagotchi A, B, and C press/release events.
 - Preserve all emulator state required for an exact resume.
 - Keep emulation independent of the comparatively slow display refresh path.
 
@@ -143,8 +141,8 @@ inactive-slot writes must leave the previously active application bootable.
 - Coalesce rapid changes and use the safest appropriate partial or differential
   refresh mode.
 - Perform periodic full cleaning refreshes to control ghosting.
-- Support both known X3 display-controller variants before declaring broad X3
-  support.
+- Runtime-select confirmed X3/X4 profiles; gate unvalidated controllers before
+  emulator/display initialization.
 
 E-ink cannot reproduce the original LCD frame rate. Gameplay and emulation
 timing remain authoritative; the display presents a sampled view of that state.
@@ -169,8 +167,8 @@ timing remain authoritative; the display presents a sampled view of that state.
   serial development diagnostic may request the same verified-save flow;
   automatic low-battery sleep may proceed only after a verified save. All
   paths wake through the confirmed power-button path.
-- Use bounded RTC-based emulator execution after sleep rather than treating a
-  wall-clock adjustment as equivalent to skipped CPU execution.
+- On X3, use bounded RTC-based execution after sleep. On X4, restore exact state
+  with emulated time paused and no catch-up because no RTC is present.
 - Keep catch-up limits and failure outcomes explicit so boot cannot run
   indefinitely.
 - Do not depend on RTC alarms or non-power-button wake without separate
@@ -178,7 +176,7 @@ timing remain authoritative; the display presents a sampled view of that state.
 
 ### Sound
 
-TamaLib sound state may be emulated, but the stock Xteink X3 has no speaker or
+TamaLib sound state may be emulated, but the stock regular Xteink X3/X4 has no speaker or
 buzzer. Initial TamaInk releases are silent. Optional visual notification may be
 considered, but authentic sound is out of scope without additional hardware.
 
@@ -191,17 +189,19 @@ Each gate must be reproducible before work depends on it:
    built on developer workstations.
 2. **Flash safety:** Prove reversible A/B installation and CrossPoint round-trip
    recovery without changing bootloader or partition-table regions.
-3. **Board detection:** Identify the X3 and its display-controller variant.
+3. **Board detection:** Identify the regular X3 or X4 and its display-controller variant.
 4. **Display:** Validate deterministic test patterns and supported refresh modes
    on physical hardware.
 5. **Input:** Validate raw and decoded press/release behavior, debounce, holds,
    and simultaneous inputs.
 6. **Read-only storage:** Mount microSD and validate known files without writes.
 7. **Persistent storage:** Prove atomic, recoverable writes under forced resets.
-8. **RTC and battery:** Validate normal readings and all expected failure modes.
+8. **RTC and battery:** Validate X3 RTC/gauge protection; X4 ADC telemetry is
+   telemetry-only and automatic low-battery protection remains disabled pending
+   threshold validation.
 9. **Host emulation:** Test ROM parsing, deterministic TamaLib stepping, button
-   input, LCD output, and save/resume without X3 hardware.
-10. **Device emulation:** Run TamaLib on the X3 with serial LCD output and no
+   input, LCD output, and save/resume without device hardware.
+10. **Device emulation:** Run TamaLib on the supported board with serial LCD output and no
     e-ink coupling.
 11. **Rendering integration:** Connect changed logical frames to the proven
     e-ink pipeline and tune refresh behavior.
@@ -220,8 +220,8 @@ firmware builds.
 
 Release-candidate preparation must complete clean-install, missing and corrupt
 file, documentation, provenance, licensing, and packaged-artifact checks.
-Until then, builds remain pre-release and support is limited to the physically
-validated UC8253 X3 configuration.
+Until then, builds remain pre-release: X3 UC8253 is hardware-validated; X4 is
+compiled and policy-gated but not claimed as hardware validated.
 
 ## Non-goals
 
@@ -233,7 +233,7 @@ TamaInk will not initially provide:
 - bundled ROMs;
 - arbitrary Tamagotchi generation support beyond P1;
 - authentic audio on unmodified X3 hardware;
-- support for Xteink X4 or unrelated devices;
+- support for X4 Pro or unrelated devices;
 - support for USB-locked X3 units;
 - a custom bootloader or custom flash layout; or
 - installation by full-chip erase or full-flash replacement.
@@ -274,8 +274,8 @@ review.
 An initial stable release requires evidence that:
 
 - installation and return to CrossPoint are repeatable and safe;
-- both supported X3 display variants work, or releases clearly identify and
-  enforce the validated variant;
+- supported X3/X4 display variants work, while releases clearly identify and
+  safely reject controller variants that have not completed hardware validation;
 - all A/B/C input events are reliable;
 - a valid P1 ROM runs deterministically;
 - save/resume survives resets and simulated interrupted writes;
@@ -289,6 +289,6 @@ An initial stable release requires evidence that:
 - required licenses, notices, corresponding source, and modification notices
   accompany the release.
 
-TamaInk is successful when an unlocked Xteink X3 can be safely flashed into a
+TamaInk is successful when an unlocked regular Xteink X3 or X4 can be safely flashed into a
 stable, dedicated, persistent Tamagotchi P1 device and later returned to a fully
 working CrossPoint installation through its normal web-flashing workflow.
