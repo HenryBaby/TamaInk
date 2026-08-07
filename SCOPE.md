@@ -208,7 +208,7 @@ Each gate must be reproducible before work depends on it:
 12. **Power behavior:** Validate autosave, sleep, wake, low-battery, and
     timekeeping across reset and sleep.
 
-## Release-candidate status
+## Release status
 
 The UC8253 development device has completed hardware checks for board and
 controller detection, display modes, physical input, microSD access, RTC and
@@ -218,10 +218,10 @@ The host suite and GitHub Actions workflow also validate deterministic
 emulation, state codecs, renderer policy, and reproducible application-only
 firmware builds.
 
-Release-candidate preparation must complete clean-install, missing and corrupt
-file, documentation, provenance, licensing, and packaged-artifact checks.
-Until then, builds remain pre-release. X3 UC8253 and X4 SSD1677 are
-hardware-validated; alternate controller variants remain policy-gated.
+Stable-release preparation includes clean-install, missing and corrupt file,
+documentation, provenance, licensing, and packaged-artifact checks. X3 UC8253
+and X4 SSD1677 are hardware-validated; alternate controller variants remain
+policy-gated.
 
 ## Non-goals
 
