@@ -6,7 +6,7 @@ three primary buttons to the original controls, and presents a purpose-built
 monochrome interface.
 
 > [!CAUTION]
-> Current builds are pre-release firmware for unlocked regular X3/X4 devices.
+> TamaInk is firmware for unlocked regular X3/X4 devices.
 > Supported controllers are X3 UC8253 and X4 SSD1677. UC8279d and UC8179 are
 > detected but disabled pending validation. X4 Pro and other devices are
 > unsupported.
@@ -97,7 +97,7 @@ UC8279d X3 and UC8179 X4 units remain disabled pending separate hardware
 validation. X4 ADC battery telemetry is available, but automatic low-battery
 shutdown remains disabled until its thresholds have been validated.
 
-Release-candidate checks cover clean installation, missing or corrupt files,
+Release checks cover clean installation, missing or corrupt files,
 documentation, licensing, reproducible builds, and packaged firmware artifacts.
 
 ## Development

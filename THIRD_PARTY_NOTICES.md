@@ -133,7 +133,7 @@ These tools run in GitHub Actions and are not linked into TamaInk firmware.
 - License: MIT at the pinned upstream revisions
 - Use: CI source checkout, Python setup, and application-image artifact upload
 
-The release-candidate audit must record the final resolved transitive
+The release audit must record the final resolved transitive
 build-tool and ESP32 platform inventory associated with the reproducible
 firmware artifact.
 
