@@ -28,13 +28,15 @@ ROM data.
 
 Supported profiles are unlocked regular ESP32-C3-based Xteink X3 and X4 units:
 
-- X3: 792x528 monochrome display, DS3231 RTC, BQ27220 gauge, UC8253;
-- X4: 800x480 monochrome display, SSD1677, ADC battery telemetry, no RTC;
+- X3: 792x528 monochrome display, DS3231 RTC, BQ27220 gauge, UC8253 or UC8279d;
+- X4: 800x480 monochrome display, SSD1677, UC8179, or UC8279, ADC battery telemetry, no RTC;
 - physical ADC-ladder buttons;
 - microSD storage;
 - Both profiles use physical controls and microSD storage.
 
-UC8279d (X3) and UC8179 (X4) are detected but disabled pending validation.
+All five regular X3/X4 controller variants are firmware-supported. The UC8279d
+X3 and UltraChip X4 variants remain pending physical panel validation; they are
+not policy-gated.
 X4 Pro and unrelated devices are unsupported.
 
 Initial releases support only regular X3/X4 units that can be detected and
@@ -220,8 +222,8 @@ firmware builds.
 
 Stable-release preparation includes clean-install, missing and corrupt file,
 documentation, provenance, licensing, and packaged-artifact checks. X3 UC8253
-and X4 SSD1677 are hardware-validated; alternate controller variants remain
-policy-gated.
+and X4 SSD1677 are hardware-validated; the alternate regular controller
+variants are firmware-supported but remain pending physical panel validation.
 
 ## Non-goals
 
@@ -274,8 +276,8 @@ review.
 An initial stable release requires evidence that:
 
 - installation and return to CrossPoint are repeatable and safe;
-- supported X3/X4 display variants work, while releases clearly identify and
-  safely reject controller variants that have not completed hardware validation;
+- all five regular X3/X4 display variants are firmware-supported, while releases
+  clearly identify the variants that have not completed physical validation;
 - all A/B/C input events are reliable;
 - a valid P1 ROM runs deterministically;
 - save/resume survives resets and simulated interrupted writes;

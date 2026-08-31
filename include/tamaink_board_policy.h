@@ -3,7 +3,7 @@
 namespace tamaink::board {
 
 enum class Family { X3, X4 };
-enum class Controller { Uc8253, Ssd1677, Uc8279d, Uc8179, Unknown };
+enum class Controller { Uc8253, Ssd1677, Uc8279d, Uc8279, Uc8179, Unknown };
 enum class State { Supported, DisabledPendingValidation, InvalidCombination };
 
 struct Decision {
@@ -20,8 +20,9 @@ struct Rule { Family family; Controller controller; State state; const char* mes
 constexpr Rule kRules[] = {
     {Family::X3, Controller::Uc8253, State::Supported, "X3 UC8253 accepted"},
     {Family::X4, Controller::Ssd1677, State::Supported, "X4 SSD1677 accepted"},
-    {Family::X3, Controller::Uc8279d, State::DisabledPendingValidation, "X3 UC8279d disabled pending validation"},
-    {Family::X4, Controller::Uc8179, State::DisabledPendingValidation, "X4 UC8179 disabled pending validation"},
+    {Family::X3, Controller::Uc8279d, State::Supported, "X3 UC8279d accepted"},
+    {Family::X4, Controller::Uc8179, State::Supported, "X4 UC8179 accepted"},
+    {Family::X4, Controller::Uc8279, State::Supported, "X4 UC8279 accepted"},
 };
 
 constexpr Decision validate(Family family, Controller controller) {

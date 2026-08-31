@@ -7,9 +7,8 @@ monochrome interface.
 
 > [!CAUTION]
 > TamaInk is firmware for unlocked regular X3/X4 devices.
-> Supported controllers are X3 UC8253 and X4 SSD1677. UC8279d and UC8179 are
-> detected but disabled pending validation. X4 Pro and other devices are
-> unsupported.
+> Supported controllers are X3 UC8253/UC8279d and X4 SSD1677/UC8179/UC8279.
+> X4 Pro and other devices are unsupported.
 
 ## What works
 
@@ -81,7 +80,7 @@ not provide a merged full-flash image or replacement partition table.
 The complete installation safety contract is documented in
 [SCOPE.md](SCOPE.md#flash-compatibility-and-safety).
 
-## Current release status
+## Current release status (v0.2.0)
 
 The following regular Xteink configurations are physically validated:
 
@@ -93,8 +92,9 @@ controls, microSD access, emulation, settings, persistence, and sleep/wake
 behavior. X3 validation additionally covers RTC catch-up, BQ27220 battery
 telemetry, guarded low-battery shutdown, and repeated CrossPoint recovery.
 
-UC8279d X3 and UC8179 X4 units remain disabled pending separate hardware
-validation. X4 ADC battery telemetry is available, but automatic low-battery
+Firmware supports X3 UC8279d and X4 UC8179/UC8279, but physical panel
+validation for those variants remains pending; they are firmware-supported and
+not policy-gated. X4 ADC battery telemetry is available, but automatic low-battery
 shutdown remains disabled until its thresholds have been validated.
 
 Release checks cover clean installation, missing or corrupt files,
@@ -113,6 +113,42 @@ TamaInk is a native ESP32 application:
 Development follows narrow, hardware-safe gates. Read [SCOPE.md](SCOPE.md)
 before contributing. Dependencies and adapted materials are recorded in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Containerized tests and builds
+
+The complete host-test suite and reproducible X3 firmware build run in the
+repository's Docker image (with a pinned Python base image). The source
+checkout is mounted read-only and copied into an ephemeral container workspace;
+Compose scopes the image and PlatformIO volume to its project name. From the
+repository root (set `COMPOSE_PROJECT_NAME` to isolate or select a project):
+
+```sh
+docker compose build
+docker compose run --rm test
+```
+
+The regular X3/X4 display-driver compile matrix is also container-only:
+
+```sh
+docker compose run --rm test drivers
+```
+
+The test container defaults to a four-CPU limit and four PlatformIO compiler
+jobs. Set `TAMAINK_CPUS` and `TAMAINK_JOBS` to adjust them for a local machine;
+`TAMAINK_JOBS` accepts values from 1 through 8. The memory limit defaults to
+12 GiB and can be adjusted with `TAMAINK_MEMORY_LIMIT`.
+
+To produce an application image, use the separate artifact command and an
+explicit output mount:
+
+```sh
+mkdir -p dist
+docker compose run --rm -e TAMAINK_OUTPUT=/output \
+  -v "$(pwd)/dist:/output" test artifact
+```
+
+No host Docker socket is required. The canonical runner is
+`scripts/container-test.sh`, used by both local Compose runs and CI.
 
 ## License
 

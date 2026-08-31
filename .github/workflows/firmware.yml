@@ -4,9 +4,7 @@ run-name: ${{ inputs.run_name || github.event.pull_request.title || github.event
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - dev
+    branches: [main, dev]
   workflow_dispatch:
     inputs:
       run_name:
@@ -23,102 +21,33 @@ concurrency:
 
 jobs:
   build-x3:
-    name: Build Xteink X3 firmware
+    name: Containerized host tests and X3 firmware build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
 
-      - name: Apply reviewed TamaLib live-state patch
-        run: bash scripts/apply_tamalib_patch.sh
-
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install pinned PlatformIO
-        run: python -m pip install --requirement requirements.txt
-
-      - name: Run persistence codec host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_persistence.cpp src/tamaink_emulator_state.cpp test/host/test_persistence.cpp -o /tmp/tamaink-persistence-tests && /tmp/tamaink-persistence-tests
-      - name: Run autosave scheduler host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/test_autosave.cpp -o /tmp/tamaink-autosave-tests && /tmp/tamaink-autosave-tests
-      - name: Run battery telemetry policy host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_battery_telemetry.cpp test/host/test_battery_telemetry.cpp -o /tmp/tamaink-battery-telemetry-tests && /tmp/tamaink-battery-telemetry-tests
-      - name: Run board battery safety policy host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/test_battery_policy.cpp -o /tmp/tamaink-battery-policy-tests && /tmp/tamaink-battery-policy-tests
-      - name: Run low-battery sleep coordinator host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_low_battery_sleep.cpp test/host/test_low_battery_sleep.cpp -o /tmp/tamaink-low-battery-sleep-tests && /tmp/tamaink-low-battery-sleep-tests
-      - name: Run wake diagnostic coordinator host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/wake_diagnostic_test.cpp -o /tmp/tamaink-wake-tests && /tmp/tamaink-wake-tests
-      - name: Run RTC sleep gate host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_rtc_sleep_gate.cpp test/host/test_rtc_sleep_gate.cpp -o /tmp/tamaink-rtc-sleep-tests && /tmp/tamaink-rtc-sleep-tests
-      - name: Run wake catch-up plan host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_wake_catchup_plan.cpp test/host/test_wake_catchup_plan.cpp -o /tmp/tamaink-wake-catchup-plan-tests && /tmp/tamaink-wake-catchup-plan-tests
-      - name: Run bounded wake catch-up execution host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_wake_catchup.cpp test/host/test_wake_catchup.cpp -o /tmp/tamaink-wake-catchup-tests && /tmp/tamaink-wake-catchup-tests
-      - name: Run adapter clock policy host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_clock.cpp test/host/test_clock.cpp -o /tmp/tamaink-clock-tests && /tmp/tamaink-clock-tests
-      - name: Run settings controller host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include src/tamaink_settings.cpp test/host/test_settings.cpp -o /tmp/tamaink-settings-tests && /tmp/tamaink-settings-tests
-      - name: Run board policy host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/test_board_policy.cpp -o /tmp/tamaink-board-policy-tests && /tmp/tamaink-board-policy-tests
-
-      - name: Run ROM validation host sanitizer tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_rom.cpp test/host/test_rom.cpp -o /tmp/tamaink-rom-tests && /tmp/tamaink-rom-tests
-
-      - name: Run TamaLib E0C6S46 host smoke test
-        run: bash test/host/tamalib_smoke.sh
-
-      - name: Run TamaLib adapter deterministic host test
-        run: bash test/host/tamalib_adapter_determinism.sh
-
-      - name: Run TamaLib adapter continuation-equivalence sanitizer test
-        run: bash test/host/tamalib_adapter_continuation.sh
-
-      - name: Run portable emulator state codec host tests
-        run: bash test/host/run_emulator_state_tests.sh
-
-      - name: Run LCD renderer host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer.cpp src/tamaink_settings.cpp test/host/test_renderer.cpp -o /tmp/tamaink-renderer-tests && /tmp/tamaink-renderer-tests
-      - name: Run renderer periodic cleaning host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer_refresh.cpp test/host/renderer_refresh_test.cpp -o /tmp/tamaink-renderer-refresh-tests && /tmp/tamaink-renderer-refresh-tests
-      - name: Run renderer dispatch host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include src/tamaink_renderer_dispatch.cpp test/host/renderer_dispatch_test.cpp -o /tmp/tamaink-renderer-dispatch-tests && /tmp/tamaink-renderer-dispatch-tests
-      - name: Run renderer geometry layout host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -I include test/host/renderer_layout_test.cpp -o /tmp/tamaink-renderer-layout-tests && /tmp/tamaink-renderer-layout-tests
-      - name: Run sleep screen host tests
-        run: g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I include -I freeink-sdk/libs/ui/FreeInkUI/include src/tamaink_sleep_screen.cpp test/host/sleep_screen_test.cpp -o /tmp/tamaink-sleep-tests && /tmp/tamaink-sleep-tests
-
       - name: Set reproducible build timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
-      - name: Build and validate firmware
-        run: pio run -e x3
+      - name: Build pinned test image
+        run: docker compose build
 
-      - name: Preserve first build
-        run: cp .pio/build/x3/firmware.bin "$RUNNER_TEMP/firmware-first.bin"
-
-      - name: Rebuild from clean output
+      - name: Run host suite, reproducibility validation, and artifact export
         run: |
-          pio run -e x3 --target clean
-          pio run -e x3
-
-      - name: Verify reproducible application image
-        run: |
-          cmp "$RUNNER_TEMP/firmware-first.bin" .pio/build/x3/firmware.bin
-          sha256sum .pio/build/x3/firmware.bin
+          mkdir -p "$RUNNER_TEMP/tamaink-output"
+          docker compose run --rm \
+            -e TAMAINK_OUTPUT=/output \
+            -v "$RUNNER_TEMP/tamaink-output:/output" \
+            test
 
       - name: Upload application image
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tamaink-x3-${{ github.sha }}
-          path: .pio/build/x3/firmware.bin
+          path: ${{ runner.temp }}/tamaink-output/firmware.bin
           if-no-files-found: error
           retention-days: 14
