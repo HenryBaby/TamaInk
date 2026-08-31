@@ -7,9 +7,8 @@ monochrome interface.
 
 > [!CAUTION]
 > TamaInk is firmware for unlocked regular X3/X4 devices.
-> Supported controllers are X3 UC8253 and X4 SSD1677. UC8279d and UC8179 are
-> detected but disabled pending validation. X4 Pro and other devices are
-> unsupported.
+> Supported controllers are X3 UC8253/UC8279d and X4 SSD1677/UC8179/UC8279.
+> X4 Pro and other devices are unsupported.
 
 ## What works
 
@@ -81,7 +80,7 @@ not provide a merged full-flash image or replacement partition table.
 The complete installation safety contract is documented in
 [SCOPE.md](SCOPE.md#flash-compatibility-and-safety).
 
-## Current release status
+## Current release status (v0.2.0)
 
 The following regular Xteink configurations are physically validated:
 
@@ -93,8 +92,9 @@ controls, microSD access, emulation, settings, persistence, and sleep/wake
 behavior. X3 validation additionally covers RTC catch-up, BQ27220 battery
 telemetry, guarded low-battery shutdown, and repeated CrossPoint recovery.
 
-UC8279d X3 and UC8179 X4 units remain disabled pending separate hardware
-validation. X4 ADC battery telemetry is available, but automatic low-battery
+Firmware supports X3 UC8279d and X4 UC8179/UC8279, but physical panel
+validation for those variants remains pending; they are firmware-supported and
+not policy-gated. X4 ADC battery telemetry is available, but automatic low-battery
 shutdown remains disabled until its thresholds have been validated.
 
 Release checks cover clean installation, missing or corrupt files,
@@ -127,11 +127,16 @@ docker compose build
 docker compose run --rm test
 ```
 
-The FreeInk display-driver compile matrix is also container-only:
+The regular X3/X4 display-driver compile matrix is also container-only:
 
 ```sh
 docker compose run --rm test drivers
 ```
+
+The test container defaults to a four-CPU limit and four PlatformIO compiler
+jobs. Set `TAMAINK_CPUS` and `TAMAINK_JOBS` to adjust them for a local machine;
+`TAMAINK_JOBS` accepts values from 1 through 8. The memory limit defaults to
+12 GiB and can be adjusted with `TAMAINK_MEMORY_LIMIT`.
 
 To produce an application image, use the separate artifact command and an
 explicit output mount:

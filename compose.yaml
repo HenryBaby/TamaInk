@@ -3,8 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    cpus: 8
-    mem_limit: 12g
+    cpus: "${TAMAINK_CPUS:-4}"
+    mem_limit: "${TAMAINK_MEMORY_LIMIT:-12g}"
+    environment:
+      TAMAINK_JOBS: "${TAMAINK_JOBS:-4}"
     volumes:
       - .:/src:ro
       - tamaink-platformio:/root/.platformio

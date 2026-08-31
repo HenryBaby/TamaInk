@@ -31,6 +31,7 @@
 #include "tamaink_settings.h"
 #include "tamaink_battery_policy.h"
 #include "tamaink_board_policy.h"
+#include "tamaink_display_variant.h"
 #include <Preferences.h>
 #include <PowerManager.h>
 #include <freertos/FreeRTOS.h>
@@ -123,6 +124,8 @@ volatile bool rendererFirstFrameConfirmed = false;
 bool rendererEnabled = false;
 bool rendererBegun = false;
 volatile bool rendererStopRequested = false;
+bool rendererSelectX3Panel = false;
+const char* displayControllerName(BoardConfig::DisplayController controller, bool x3 = false);
 tamaink::wake::Coordinator wakeDiagnostic;
 tamaink::sleep_gesture::Controller sleepGesture;
 bool powerTapReleasePending = false;
@@ -234,15 +237,16 @@ void stopRenderer() {
 bool startRenderer() {
   const auto controller = BoardConfig::ACTIVE.displayController;
   if (controller != BoardConfig::DisplayController::UC8253 &&
-      controller != BoardConfig::DisplayController::SSD1677) {
-    Serial.println("Display rendering disabled: controller is not UC8253/SSD1677; serial emulator remains active");
+      controller != BoardConfig::DisplayController::SSD1677 &&
+      controller != BoardConfig::DisplayController::UC8279 &&
+      controller != BoardConfig::DisplayController::UC8179) {
+    Serial.println("Display rendering disabled: unsupported controller; serial emulator remains active");
     return false;
   }
   const auto& p = BoardConfig::ACTIVE.display;
   rendererDisplay = new (std::nothrow) EInkDisplay(p.sclk, p.mosi, p.cs, p.dc, p.rst, p.busy);
   if (!rendererDisplay) { Serial.println("Display renderer: EInkDisplay allocation failed"); return false; }
-  if (BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3 ||
-      BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3Uc8279)
+  if (rendererSelectX3Panel)
     rendererDisplay->setDisplayX3();
   rendererStopRequested = false;
   if (!initializeSharedSpi()) { delete rendererDisplay; rendererDisplay = nullptr; return false; }
@@ -262,7 +266,8 @@ bool startRenderer() {
   rendererEnabled = true;
   const auto layout = tamaink::render::layoutForGeometry(rendererDisplay->getDisplayWidth(), rendererDisplay->getDisplayHeight());
   Serial.printf("Display renderer: %s active (LCD %ux scale, origin %ld,%ld; icons %ux)\n",
-                controller == BoardConfig::DisplayController::SSD1677 ? "SSD1677 X4" : "UC8253 X3",
+                displayControllerName(controller, BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3 ||
+                    BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3Uc8279),
                 layout.lcdScale, static_cast<long>(layout.lcdOriginX), static_cast<long>(layout.lcdOriginY), layout.iconScale);
   return true;
 }
@@ -582,12 +587,12 @@ const char* xteinkVerdictName(freeink::XteinkVerdict verdict) {
   }
 }
 
-const char* displayControllerName(BoardConfig::DisplayController controller) {
+const char* displayControllerName(BoardConfig::DisplayController controller, bool x3) {
   switch (controller) {
     case BoardConfig::DisplayController::UC8253:
       return "UC8253";
     case BoardConfig::DisplayController::UC8279:
-      return "UC8279d";
+      return x3 ? "UC8279d (X3)" : "UC8279 (X4)";
     case BoardConfig::DisplayController::SSD1677:
       return "SSD1677";
     case BoardConfig::DisplayController::UC8179:
@@ -1333,19 +1338,23 @@ void setup() {
     BoardConfig::selectDevice(isX3 ? BoardConfig::Board::XteinkX3 : BoardConfig::Board::XteinkX4);
     runRtcBatteryDiagnostic();
     freeink::applyXteinkDisplayController();
-    Serial.printf("Display controller: %s\n", displayControllerName(BoardConfig::ACTIVE.displayController));
-
-    const auto controller = [&] {
+    const auto detected = [&] {
       switch (BoardConfig::ACTIVE.displayController) {
-        case BoardConfig::DisplayController::UC8253: return tamaink::board::Controller::Uc8253;
-        case BoardConfig::DisplayController::SSD1677: return tamaink::board::Controller::Ssd1677;
-        case BoardConfig::DisplayController::UC8279: return tamaink::board::Controller::Uc8279d;
-        case BoardConfig::DisplayController::UC8179: return tamaink::board::Controller::Uc8179;
-        default: return tamaink::board::Controller::Unknown;
+        case BoardConfig::DisplayController::UC8253: return tamaink::display_variant::DetectedController::Uc8253;
+        case BoardConfig::DisplayController::SSD1677: return tamaink::display_variant::DetectedController::Ssd1677;
+        case BoardConfig::DisplayController::UC8279: return tamaink::display_variant::DetectedController::Uc8279;
+        case BoardConfig::DisplayController::UC8179: return tamaink::display_variant::DetectedController::Uc8179;
+        default: return tamaink::display_variant::DetectedController::Unknown;
       }
     }();
+    const auto resolution = tamaink::display_variant::resolve(
+        isX3 ? tamaink::board::Family::X3 : tamaink::board::Family::X4, detected);
+    rendererSelectX3Panel = resolution.selectX3Panel;
+    if (resolution.profile == tamaink::display_variant::ProfileIntent::X3Uc8279)
+      BoardConfig::selectDevice(BoardConfig::Board::XteinkX3Uc8279);
+    Serial.printf("Display controller: %s\n", displayControllerName(BoardConfig::ACTIVE.displayController, isX3));
     const auto decision = tamaink::board::validate(
-        isX3 ? tamaink::board::Family::X3 : tamaink::board::Family::X4, controller);
+        isX3 ? tamaink::board::Family::X3 : tamaink::board::Family::X4, resolution.controller);
     Serial.printf("Board policy: %s\n", decision.message);
     if (!decision.accepted()) {
       Serial.println("Boot stopped before emulator/display initialization.");
@@ -1374,7 +1383,8 @@ void setup() {
     }
 
     if (!isX3) {
-      Serial.println("X4 SSD1677 renderer supported; standalone display diagnostic unavailable after emulator startup failure.");
+      Serial.printf("%s renderer supported; standalone display diagnostic unavailable after emulator startup failure.\n",
+                    displayControllerName(BoardConfig::ACTIVE.displayController, false));
       return;
     }
 

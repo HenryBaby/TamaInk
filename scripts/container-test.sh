@@ -4,6 +4,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}"
 
+TAMAINK_JOBS="${TAMAINK_JOBS:-4}"
+if ! [[ "$TAMAINK_JOBS" =~ ^[0-9]+$ ]]; then
+  echo 'TAMAINK_JOBS must be an integer from 1 through 8' >&2
+  exit 2
+fi
+TAMAINK_JOBS_NUMBER=$((10#$TAMAINK_JOBS))
+if (( TAMAINK_JOBS_NUMBER < 1 || TAMAINK_JOBS_NUMBER > 8 )); then
+  echo 'TAMAINK_JOBS must be an integer from 1 through 8' >&2
+  exit 2
+fi
+PIO_JOBS="$TAMAINK_JOBS_NUMBER"
+
 run_cpp() {
   local output="$1"
   shift
@@ -21,10 +33,10 @@ export_firmware() {
 }
 
 build_firmware() {
-  pio run -e x3 -j 8
+  pio run -e x3 -j "$PIO_JOBS"
   cp .pio/build/x3/firmware.bin /tmp/tamaink-firmware-first.bin
-  pio run -e x3 --target clean
-  pio run -e x3 -j 8
+  pio run -e x3 --target clean -j "$PIO_JOBS"
+  pio run -e x3 -j "$PIO_JOBS"
   cmp /tmp/tamaink-firmware-first.bin .pio/build/x3/firmware.bin
   sha256sum .pio/build/x3/firmware.bin
   if [[ -n "${TAMAINK_OUTPUT:-}" ]]; then
@@ -35,9 +47,7 @@ build_firmware() {
 
 build_driver_matrix() {
   cd verification/freeink-display-drivers
-  pio run -e xteink -e xteink_x4 -e m5paper -e m5paper_official \
-    -e delink -e murphy -e m5paper_v11 -e papers3 -e eego_a4 -e sticky \
-    -e x4pro -e x4c -e papermono -j 8
+  pio run -e xteink -e xteink_x4 -j "$PIO_JOBS"
 }
 
 if [[ "${1:-test}" == artifact ]]; then
@@ -67,6 +77,7 @@ run_cpp tamaink-wake-catchup-tests -I include src/tamaink_wake_catchup.cpp test/
 run_cpp tamaink-clock-tests -I include src/tamaink_clock.cpp test/host/test_clock.cpp
 run_cpp tamaink-settings-tests -I include src/tamaink_settings.cpp test/host/test_settings.cpp
 run_cpp tamaink-board-policy-tests -I include test/host/test_board_policy.cpp
+run_cpp tamaink-display-variant-tests -I include test/host/test_display_variant.cpp
 run_cpp tamaink-rom-tests -fsanitize=address,undefined -I include src/tamaink_rom.cpp test/host/test_rom.cpp
 bash test/host/tamalib_smoke.sh
 bash test/host/tamalib_adapter_determinism.sh
