@@ -50,8 +50,8 @@ FreeInk states that portions, including e-paper initialization sequences and
 waveform LUTs, derive from the MIT-licensed OpenX4 E-Paper Community SDK and
 credits original e-paper driver authorship to CidVonHighwind. Its complete
 `LICENSE` and `NOTICE` files must remain with source and release notices. The
-firmware pins revision `92303ba5e4d4f762bb2f9126a3e31c303d66eb28`
-(2026-07-28) as the `freeink-sdk` Git submodule and currently links only its
+firmware pins revision `c9f7525af6c15bf8b342af9c666a214e78e627fc`
+(2026-08-30) as the `freeink-sdk` Git submodule and currently links only its
 `BoardConfig`, `XteinkDetect`, `EInkDisplay`, `InputManager`, `SDCardManager`,
 `BatteryMonitor`, `PowerManager`, and `FreeInkUI` libraries. The X3 RTC diagnostic uses the Arduino Wire API
 and the DS3231 register behavior documented by the pinned FreeInk implementation,

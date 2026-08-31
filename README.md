@@ -114,6 +114,37 @@ Development follows narrow, hardware-safe gates. Read [SCOPE.md](SCOPE.md)
 before contributing. Dependencies and adapted materials are recorded in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+### Containerized tests and builds
+
+The complete host-test suite and reproducible X3 firmware build run in the
+repository's Docker image (with a pinned Python base image). The source
+checkout is mounted read-only and copied into an ephemeral container workspace;
+Compose scopes the image and PlatformIO volume to its project name. From the
+repository root (set `COMPOSE_PROJECT_NAME` to isolate or select a project):
+
+```sh
+docker compose build
+docker compose run --rm test
+```
+
+The FreeInk display-driver compile matrix is also container-only:
+
+```sh
+docker compose run --rm test drivers
+```
+
+To produce an application image, use the separate artifact command and an
+explicit output mount:
+
+```sh
+mkdir -p dist
+docker compose run --rm -e TAMAINK_OUTPUT=/output \
+  -v "$(pwd)/dist:/output" test artifact
+```
+
+No host Docker socket is required. The canonical runner is
+`scripts/container-test.sh`, used by both local Compose runs and CI.
+
 ## License
 
 TamaInk is licensed under the

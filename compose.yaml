@@ -1,0 +1,13 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    cpus: 8
+    mem_limit: 12g
+    volumes:
+      - .:/src:ro
+      - tamaink-platformio:/root/.platformio
+
+volumes:
+  tamaink-platformio:
